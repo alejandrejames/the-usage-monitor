@@ -1,8 +1,12 @@
-# project.yml — XcodeGen spec for ClaudeUsage
+# project.yml — XcodeGen spec for ClaudeUsage (macOS-only)
 # Regenerate the .xcodeproj with:  xcodegen generate
 #
-# This file is build tooling, not an app dependency. The app targets
-# themselves use only native Apple frameworks (no SPM / CocoaPods).
+# This file is build tooling, not an app dependency. The app uses only native
+# Apple frameworks (no SPM / CocoaPods).
+#
+# iOS/widget targets were removed: the only Mac→iPhone sync path (iCloud KVS)
+# requires a paid Apple Developer account, which this project (free Personal
+# Team) does not have. See README "Known gaps".
 
 name: ClaudeUsage
 
@@ -10,7 +14,6 @@ options:
   bundleIdPrefix: com.you
   deploymentTarget:
     macOS: "26.0"
-    iOS: "26.0"
   createIntermediateGroups: true
 
 settings:
@@ -18,7 +21,7 @@ settings:
     SWIFT_VERSION: "5.10"
     MARKETING_VERSION: "1.0.0"
     CURRENT_PROJECT_VERSION: "1"
-    DEVELOPMENT_TEAM: ""              # set to your Personal Team ID, or leave for automatic
+    DEVELOPMENT_TEAM: "YOUR_TEAM_ID"    # Personal Team (free Apple ID: <your-apple-id-email>)
     CODE_SIGN_STYLE: Automatic
     SWIFT_EMIT_LOC_STRINGS: "YES"
 
@@ -40,40 +43,3 @@ targets:
         CODE_SIGN_ENTITLEMENTS: ClaudeUsage/ClaudeUsage.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-
-  # ── iOS companion app ──────────────────────────────────────────────────────
-  ClaudeUsageIOS:
-    type: application
-    platform: iOS
-    sources:
-      - path: Shared
-      - path: ClaudeUsageIOS
-      - path: ClaudeUsage/LoginView.swift            # shared login UI (iOS branch)
-    dependencies:
-      - target: ClaudeUsageWidget
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.you.claudeusage.ios
-        GENERATE_INFOPLIST_FILE: "YES"
-        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
-        CODE_SIGN_ENTITLEMENTS: ClaudeUsageIOS/ClaudeUsageIOS.entitlements
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-        TARGETED_DEVICE_FAMILY: "1,2"
-
-  # ── WidgetKit extension (iOS) ──────────────────────────────────────────────
-  ClaudeUsageWidget:
-    type: app-extension
-    platform: iOS
-    sources:
-      - path: ClaudeUsageWidget
-      - path: Shared/Theme.swift                     # Theme only — no Auth/UsageStore
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.you.claudeusage.widget
-        GENERATE_INFOPLIST_FILE: "YES"
-        INFOPLIST_KEY_CFBundleDisplayName: "Claude Usage"
-        INFOPLIST_KEY_NSExtensionPointIdentifier: com.apple.widgetkit-extension
-        CODE_SIGN_ENTITLEMENTS: ClaudeUsageWidget/ClaudeUsageWidget.entitlements
-        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
-        TARGETED_DEVICE_FAMILY: "1,2"

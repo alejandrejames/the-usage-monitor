@@ -2,11 +2,23 @@
 
 This file is the primary context for Claude Code. Read it fully before generating or modifying any file in this project.
 
+> **Status (2026-05-30): macOS-only, single target.** The iOS app and WidgetKit
+> widget were **removed** — the only Mac→iPhone sync path (iCloud KVS) requires
+> a paid Apple Developer account, which the free Personal Team can't use. Ignore
+> the iOS/widget references that remain in the tables/docs below; only the
+> `ClaudeUsage` macOS target exists. Also note: the auth/endpoint design changed
+> entirely (see the Authentication and Data flow sections) — reads Claude Code's
+> OAuth token and uses the `/v1/messages` header technique, **not** WebView
+> sessionKey. And this approach is **against Anthropic's Consumer ToS**; it's a
+> personal, never-distributed tool (see README's ToS notice).
+
 ---
 
 ## What this project is
 
-A native macOS menubar app that shows Claude.ai subscription usage (session % and weekly %) in the menu bar, with a Liquid Glass popover on click. Includes an iOS companion app and a WidgetKit home-screen widget. Personal use only — no App Store distribution.
+A native macOS menu-bar app that shows your Claude subscription usage (5-hour
+session % and 7-day weekly %) in the menu bar, with a Liquid Glass popover on
+click. Personal use only — no App Store distribution, macOS-only.
 
 **Target users:** The developer running this on their own Mac. There is no multi-user requirement.
 
@@ -22,7 +34,7 @@ A native macOS menubar app that shows Claude.ai subscription usage (session % an
 | Styling | Liquid Glass — `.glassEffect()` | Requires macOS 26 / iOS 26. Use `.ultraThinMaterial` fallback for older OS |
 | Minimum targets | macOS 26, iOS 26 | Xcode 26 required |
 | Networking | `URLSession` with async/await | No third-party HTTP libraries |
-| Keychain | `Security` framework directly | No wrappers |
+| Auth | Reuse Claude Code's OAuth token via `Security` framework | Reads keychain item `Claude Code-credentials`; macOS unsandboxed |
 | Widget | WidgetKit | Reads App Group UserDefaults — no direct networking |
 | Build | `Scripts/build.sh` | xcodebuild → create-dmg |
 | Signing | Personal Team (free Apple ID) | No paid Developer ID, no notarization |
@@ -38,17 +50,16 @@ ClaudeUsage/
 │
 ├── Shared/                          ← compiled into macOS + iOS targets
 │   ├── Theme.swift                  ClaudeGlass modifier, UsageBar, color helpers
-│   ├── AuthManager.swift            WKWebView cookie login + Keychain
-│   └── UsageStore.swift             @Observable store, UsagePoller, App Group writes
+│   ├── AuthManager.swift            Reads Claude Code's OAuth token from keychain (macOS); App Group viewer (iOS)
+│   └── UsageStore.swift             @Observable store, UsagePoller (Bearer), App Group read/write
 │
 ├── ClaudeUsage/                     ← macOS menubar target
-│   ├── ClaudeUsageApp.swift         @main, MenuBarExtra, MenuBarLabel, LoginPromptView
+│   ├── ClaudeUsageApp.swift         @main, MenuBarExtra, MenuBarLabel, NoCredentialView
 │   ├── PopoverView.swift            Liquid Glass usage panel shown on click
-│   ├── LoginView.swift              WKWebView sheet, auto-dismisses on cookie capture
-│   └── SettingsView.swift           Account, polling interval, notification alerts
+│   └── SettingsView.swift           Account status, polling interval, notification alerts
 │
-├── ClaudeUsageIOS/                  ← iOS companion target
-│   └── ClaudeUsageIOSApp.swift      @main, IOSMainView (usage cards), IOSLoginView
+├── ClaudeUsageIOS/                  ← iOS companion target (viewer only)
+│   └── ClaudeUsageIOSApp.swift      @main, IOSMainView (usage cards), IOSWaitingView
 │
 ├── ClaudeUsageWidget/               ← WidgetKit extension target
 │   └── ClaudeUsageWidget.swift      TimelineProvider, SmallWidgetView, MediumWidgetView
@@ -78,9 +89,10 @@ Three targets must exist in `ClaudeUsage.xcodeproj`:
 | `ClaudeUsageIOS` | iOS App | `com.you.claudeusage.ios` | iOS 26 |
 | `ClaudeUsageWidget` | Widget Extension | `com.you.claudeusage.widget` | iOS 26 |
 
-**Capabilities required on all targets:**
-- App Groups → `group.com.you.claudeusage`
-- Keychain Sharing → `com.you.claudeusage`
+**Capabilities:**
+- App Groups → `group.com.you.claudeusage` (all three targets)
+- **macOS app: App Sandbox OFF** — required to read Claude Code's login-keychain
+  token. No Keychain Sharing group is needed (unsandboxed access).
 
 **`Shared/` target membership:**
 
@@ -94,18 +106,31 @@ The Widget target does **not** get `AuthManager` or `UsageStore`. It only reads 
 
 ---
 
-## Authentication — WebView session cookie
+## Authentication — reuse Claude Code's OAuth token
 
-See `docs/auth.md` for full detail. Summary:
+> **Reality check (2026-05-30):** The original WebView/`sessionKey` design did
+> not work. `api.claude.ai` does not resolve, and `claude.ai/api/oauth/usage`
+> sits behind a Cloudflare bot challenge that a plain `URLSession` cannot pass.
+> The app now reuses Claude Code's existing OAuth token. There is no in-app
+> login UI.
 
-- Login method: **WebView only** — no manual token paste, no OAuth CLI flow.
-- The app presents `WKWebView` loading `https://claude.ai/login`.
-- `AuthManager` conforms to `WKHTTPCookieStoreObserver` and fires when the `sessionKey` cookie appears.
-- `sessionKey` is saved to Keychain via `KeychainService` with `kSecAttrAccessibleWhenUnlocked`.
-- On subsequent launches, `AuthManager.init()` checks Keychain — if present, `isAuthenticated = true` immediately and the login view is skipped.
-- `AuthManager.logout()` deletes the Keychain entry and sets `isAuthenticated = false`.
+- **macOS:** `AuthManager` reads Claude Code's credential from the **login
+  keychain** (generic-password, service `Claude Code-credentials`), decodes the
+  JSON, and exposes `claudeAiOauth.accessToken` (an `sk-ant-oat01-…` Bearer
+  token) plus `expiresAt` and `subscriptionType`.
+- `isAuthenticated` is true when a non-expired token is present. There is no
+  sign-in and no `logout()` — the user manages auth via the `claude` CLI. The
+  popover shows a "Claude Code not detected" prompt with a **Re-check** button
+  when no token is found.
+- **The macOS app is NOT sandboxed.** A sandboxed app cannot read a login-
+  keychain item it didn't create. App Sandbox is intentionally off (personal,
+  non-App-Store tool). App Groups still works unsandboxed.
+- **iOS has no token.** It cannot read the Mac's keychain, so it never fetches.
+  It is a **viewer**: `AuthManager` (iOS branch) and `UsageStore.loadFromAppGroup()`
+  read the values the macOS app synced into the App Group.
 
-**Do not implement** any fallback to OAuth token paste or `claude setup-token`. WebView login is the only method.
+**Do not** reintroduce WebView/`sessionKey` login, OAuth token paste, or a
+custom OAuth flow. The token comes from Claude Code's keychain item.
 
 ---
 
@@ -113,15 +138,14 @@ See `docs/auth.md` for full detail. Summary:
 
 See `docs/data-flow.md` for the full diagram. Summary:
 
-1. `UsagePoller` fires every 60 seconds (configurable via `@AppStorage("refreshInterval")`).
-2. It reads `sessionKey` from `AuthManager.sessionKey` (which reads Keychain).
-3. It calls `GET https://api.claude.ai/api/oauth/usage` with:
-   - `Cookie: sessionKey=<value>`
-   - `User-Agent: claude-code/1.0.0` — **required** to avoid 429 rate-limiting
+1. `UsagePoller` fires every 60 seconds (configurable via `@AppStorage("refreshInterval")`). Polling starts at launch, not when the popover opens.
+2. It reads the Bearer token from `AuthManager.accessToken` (which reads Claude Code's keychain item).
+3. It calls `GET https://api.anthropic.com/api/oauth/usage` with:
+   - `Authorization: Bearer <accessToken>`
    - `Accept: application/json`
-4. Response is decoded into `UsageResponse` (`limits.sessionUsagePercent`, `limits.weeklyUsagePercent`, `limits.sessionResetAt`, `limits.weeklyResetAt`).
-5. `UsageStore` is updated and also writes to `UserDefaults(suiteName: "group.com.you.claudeusage")` for the widget.
-6. If polling fails, `UsageStore.isStale = true` and the menu bar icon fades to 50% opacity.
+4. Response is decoded into `UsageResponse`: `five_hour.utilization`/`resets_at` (the 5-hour "session" window) and `seven_day.utilization`/`resets_at` (the weekly window). `resets_at` is ISO-8601 **with fractional seconds + offset**, so the decoder uses a custom `ISO8601DateFormatter` with `.withFractionalSeconds` (plain `.iso8601` fails).
+5. `UsageStore` is updated and also writes display-safe values to `UserDefaults(suiteName: "group.com.you.claudeusage")` for the widget and iOS viewer.
+6. On failure (network, decode) or HTTP 401 (expired/revoked token) `UsageStore.isStale = true`, the menu bar icon fades to 50% opacity, and `AuthManager.refreshAvailability()` re-checks the token.
 
 ---
 
@@ -157,8 +181,8 @@ List { rows }
 - **No third-party dependencies.** Everything is native Apple frameworks.
 - **`@Observable` not `ObservableObject`.** Use the macro. Do not use `@Published`.
 - **Polling not push.** There is no WebSocket or background daemon. `Timer` is sufficient.
-- **Widget reads App Group, not the network.** The widget never calls the API itself.
-- **macOS `LoginView` uses `NSViewRepresentable`.** The iOS version uses `UIViewRepresentable`. Both are in `LoginView.swift` with `#if os(macOS)` guards.
+- **Widget and iOS read the App Group, not the network.** Only the macOS app fetches; everything else reads the synced values.
+- **No in-app login.** Auth is Claude Code's keychain token (see Authentication). No `LoginView`/WebView.
 - **`MenuBarExtra` with `.menuBarExtraStyle(.window)`.** This gives a floating panel, not a dropdown menu.
 - **`@AppStorage` for preferences** (`refreshInterval`, `alertThreshold80`, `alertThreshold95`). No custom persistence layer.
 
@@ -182,11 +206,12 @@ List { rows }
 - Do not add SPM packages or CocoaPods.
 - Do not create view models — use `@Observable` stores directly.
 - Do not use `Combine` or `@Published`.
-- Do not add a manual token input field or any non-WebView auth path.
+- Do not reintroduce WebView/`sessionKey` login or a manual token input field. Auth = Claude Code's keychain token.
+- Do not re-enable the macOS App Sandbox — it blocks reading Claude Code's keychain item.
 - Do not create unit test targets unless explicitly asked.
 - Do not modify `ExportOptions.plist` — it is pre-configured.
 - Do not change bundle IDs — they must match the App Group entitlement.
-- Do not use `UserDefaults` for the session key — Keychain only.
+- Do not write the OAuth token to `UserDefaults` or the App Group — only display-safe percentages/dates are synced.
 - Do not add `.glassEffect()` to content-layer views (lists, scroll views).
 
 ---

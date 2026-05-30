@@ -8,15 +8,21 @@ struct ClaudeUsageApp: App {
 
     @State private var authManager = AuthManager()
     @State private var store       = UsageStore()
-    @State private var showLogin   = false
     private var poller: UsagePoller
 
     init() {
         let auth  = AuthManager()
         let store = UsageStore()
-        self.poller = UsagePoller(store: store, authManager: auth)
+        let poller = UsagePoller(store: store, authManager: auth)
+        self.poller = poller
         _authManager = State(initialValue: auth)
         _store       = State(initialValue: store)
+
+        // Start polling at launch (not when the popover opens) so the menu-bar
+        // percentage is populated immediately. The poller no-ops without a token.
+        if auth.isAuthenticated {
+            DispatchQueue.main.async { poller.start() }
+        }
     }
 
     var body: some Scene {
@@ -25,21 +31,23 @@ struct ClaudeUsageApp: App {
             // The popover that appears on click is itself Liquid Glass-styled
             if authManager.isAuthenticated {
                 PopoverView(store: store, authManager: authManager, poller: poller)
-                    // Polling runs for the whole authenticated session, not just
-                    // while the popover is open, so the menu-bar % stays current.
-                    .onAppear { poller.start() }
             } else {
-                LoginPromptView(showLogin: $showLogin)
+                NoCredentialView(authManager: authManager)
+                    // If the token shows up later, begin polling.
+                    .onChange(of: authManager.isAuthenticated) { _, ok in
+                        if ok { poller.start() }
+                    }
             }
         } label: {
             MenuBarLabel(store: store, isAuthenticated: authManager.isAuthenticated)
         }
         .menuBarExtraStyle(.window)
 
-        // ── Login sheet (presented from LoginPromptView) ───────────────────
-        WindowGroup("Sign in to Claude", id: "login") {
-            LoginView(authManager: authManager)
-                .frame(width: 400, height: 560)
+        // ── Settings window ────────────────────────────────────────────────
+        // A standalone Window (not a sheet) so changing a control doesn't
+        // resign focus and dismiss the menu-bar panel.
+        Window("Claude Usage Settings", id: "settings") {
+            SettingsView(authManager: authManager)
         }
         .windowResizability(.contentSize)
     }
@@ -67,23 +75,27 @@ struct MenuBarLabel: View {
     }
 }
 
-// MARK: - Login prompt (inside popover when unauthenticated)
+// MARK: - No-credential prompt (shown when Claude Code's token isn't available)
 
-struct LoginPromptView: View {
-    @Binding var showLogin: Bool
+struct NoCredentialView: View {
+    let authManager: AuthManager
 
     var body: some View {
         VStack(spacing: 12) {
-            Image(systemName: "person.badge.key")
+            Image(systemName: "key.slash")
                 .font(.system(size: 28))
                 .foregroundStyle(.secondary)
-            Text("Not signed in")
+            Text("Claude Code not detected")
                 .font(.headline)
-            Button("Sign in with Claude…") { showLogin = true }
+            Text("Sign in with Claude Code (run `claude` and log in), then re-check.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Re-check") { authManager.refreshAvailability() }
                 .buttonStyle(.glass)        // Liquid Glass button
         }
         .padding(20)
-        .frame(width: 220)
+        .frame(width: 240)
         .claudeGlass()
     }
 }

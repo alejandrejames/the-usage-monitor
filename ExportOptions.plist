@@ -10,7 +10,7 @@
   <key>signingStyle</key>
   <string>automatic</string>
 
-  <!-- Set to your Xcode team ID — found in Xcode → Signing & Capabilities -->
+  <!-- Personal Team ID (free Apple ID: <your-apple-id-email>) -->
   <key>teamID</key>
   <string>YOUR_TEAM_ID</string>
 

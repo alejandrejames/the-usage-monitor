@@ -1,92 +1,82 @@
-// AuthManager.swift — WebView login + Keychain credential store
-// Captures the `sessionKey` cookie from claude.ai and saves it securely.
+// AuthManager.swift — OAuth credential access
+// macOS: reads Claude Code's existing OAuth token from the login keychain.
+// iOS:   has no local token; it views data synced from the Mac via App Group.
 
-import WebKit
+import Foundation
 import Security
 
-// MARK: - Keychain helper
+// MARK: - Claude Code credential model
 
-enum KeychainService {
-    private static let account = "claude_session_key"
-    private static let service = "com.you.claudeusage"
-
-    static func save(_ value: String) {
-        guard let data = value.data(using: .utf8) else { return }
-        let query: [CFString: Any] = [
-            kSecClass:            kSecClassGenericPassword,
-            kSecAttrService:      service,
-            kSecAttrAccount:      account,
-            kSecValueData:        data,
-            kSecAttrAccessible:   kSecAttrAccessibleWhenUnlocked
-        ]
-        SecItemDelete(query as CFDictionary)          // remove stale entry first
-        SecItemAdd(query as CFDictionary, nil)
+/// The subset of Claude Code's keychain JSON we care about.
+private struct ClaudeCodeCredentials: Decodable {
+    struct OAuth: Decodable {
+        let accessToken:  String
+        let refreshToken: String?
+        let expiresAt:    Double?       // epoch milliseconds
+        let subscriptionType: String?
     }
+    let claudeAiOauth: OAuth
+}
 
-    static func load() -> String? {
+// MARK: - Keychain reader (macOS)
+
+#if os(macOS)
+/// Reads the generic-password item the `claude` CLI writes to the login
+/// keychain (service "Claude Code-credentials"). Requires the macOS app to be
+/// un-sandboxed so it can reach a login-keychain item it did not create.
+enum ClaudeCodeKeychain {
+    private static let service = "Claude Code-credentials"
+
+    static func loadToken() -> (token: String, expiresAt: Date?, plan: String?)? {
         let query: [CFString: Any] = [
-            kSecClass:            kSecClassGenericPassword,
-            kSecAttrService:      service,
-            kSecAttrAccount:      account,
-            kSecReturnData:       true,
-            kSecMatchLimit:       kSecMatchLimitOne
+            kSecClass:       kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecReturnData:  true,
+            kSecMatchLimit:  kSecMatchLimitOne,
         ]
         var result: AnyObject?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
               let data = result as? Data,
-              let string = String(data: data, encoding: .utf8) else { return nil }
-        return string
-    }
+              let creds = try? JSONDecoder().decode(ClaudeCodeCredentials.self, from: data)
+        else { return nil }
 
-    static func delete() {
-        let query: [CFString: Any] = [
-            kSecClass:       kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: account
-        ]
-        SecItemDelete(query as CFDictionary)
+        let oauth = creds.claudeAiOauth
+        let expiry = oauth.expiresAt.map { Date(timeIntervalSince1970: $0 / 1000) }
+        return (oauth.accessToken, expiry, oauth.subscriptionType)
     }
 }
+#endif
 
 // MARK: - AuthManager
 
 @Observable
-final class AuthManager: NSObject, WKHTTPCookieStoreObserver {
+final class AuthManager {
 
     var isAuthenticated: Bool = false
-    var sessionKey: String? { KeychainService.load() }
+    var subscriptionPlan: String? = nil
 
-    private var webView: WKWebView?
-
-    override init() {
-        super.init()
-        isAuthenticated = KeychainService.load() != nil
+    init() {
+        refreshAvailability()
     }
 
-    // Called by LoginView to attach the observer
-    func attachCookieObserver(to webView: WKWebView) {
-        self.webView = webView
-        webView.configuration.websiteDataStore.httpCookieStore.add(self)
+    /// Current OAuth bearer token, or nil if unavailable/expired.
+    var accessToken: String? {
+        guard let creds = ClaudeCodeKeychain.loadToken() else { return nil }
+        if let expiry = creds.expiresAt, expiry < Date() { return nil }   // expired
+        return creds.token
     }
 
-    // WKHTTPCookieStoreObserver — fires on every cookie change
-    func cookiesDidChange(in store: WKHTTPCookieStore) {
-        store.getAllCookies { [weak self] cookies in
-            guard let self else { return }
-            if let sessionCookie = cookies.first(where: { $0.name == "sessionKey" }) {
-                DispatchQueue.main.async {
-                    KeychainService.save(sessionCookie.value)
-                    self.isAuthenticated = true
-                    // Remove observer — we have what we need
-                    self.webView?.configuration.websiteDataStore
-                        .httpCookieStore.remove(self)
-                }
-            }
+    /// Re-evaluates whether a usable credential is present. Call after a 401
+    /// or when the app becomes active, since the token can be refreshed or
+    /// revoked by Claude Code out-of-band.
+    func refreshAvailability() {
+        if let creds = ClaudeCodeKeychain.loadToken() {
+            let valid = creds.expiresAt.map { $0 >= Date() } ?? true
+            isAuthenticated = valid
+            subscriptionPlan = creds.plan
+        } else {
+            isAuthenticated = false
+            subscriptionPlan = nil
         }
-    }
-
-    func logout() {
-        KeychainService.delete()
-        isAuthenticated = false
     }
 }
