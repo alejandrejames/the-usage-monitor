@@ -18,6 +18,7 @@ import SwiftUI
 struct PopoverView: View {
     let store:       UsageStore
     let authManager: AuthManager
+    let poller:      UsagePoller
 
     @State private var showSettings = false
 
@@ -69,8 +70,7 @@ struct PopoverView: View {
             // ── Action row ────────────────────────────────────────────────
             HStack(spacing: 8) {
                 Button {
-                    // trigger manual poll (poller is in app scope;
-                    // add a refreshNow() method there if needed)
+                    poller.refreshNow()
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                         .font(.system(size: 12))

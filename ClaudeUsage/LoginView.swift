@@ -7,11 +7,13 @@ import WebKit
 
 // MARK: - WKWebView representable
 
-struct WebView: NSViewRepresentable {          // swap to UIViewRepresentable for iOS
+/// Shared WebView wrapper. macOS bridges through NSViewRepresentable, iOS
+/// through UIViewRepresentable — both build the same configured WKWebView.
+struct WebView {
     let url:         URL
     let authManager: AuthManager
 
-    func makeNSView(context: Context) -> WKWebView {
+    fileprivate func makeWebView() -> WKWebView {
         let config  = WKWebViewConfiguration()
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/537.36 Safari/537.36"
@@ -19,9 +21,19 @@ struct WebView: NSViewRepresentable {          // swap to UIViewRepresentable fo
         webView.load(URLRequest(url: url))
         return webView
     }
+}
 
+#if os(macOS)
+extension WebView: NSViewRepresentable {
+    func makeNSView(context: Context) -> WKWebView { makeWebView() }
     func updateNSView(_ nsView: WKWebView, context: Context) {}
 }
+#else
+extension WebView: UIViewRepresentable {
+    func makeUIView(context: Context) -> WKWebView { makeWebView() }
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
+}
+#endif
 
 // MARK: - LoginView
 

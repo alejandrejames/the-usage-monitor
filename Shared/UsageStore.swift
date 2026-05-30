@@ -1,7 +1,8 @@
 // UsageStore.swift — Observable usage data store
-// UsagePoller.swift — 60-second polling of the Anthropic usage endpoint
+// UsagePoller.swift — polling of the Anthropic usage endpoint + threshold alerts
 
 import Foundation
+import UserNotifications
 
 // MARK: - Response model
 
@@ -31,6 +32,7 @@ final class UsageStore {
 
     func update(from response: UsageResponse) {
         let l = response.limits
+        let previousSession = sessionPercent
         sessionPercent = l.sessionUsagePercent
         weeklyPercent  = l.weeklyUsagePercent
         sessionResetAt = l.sessionResetAt
@@ -38,6 +40,7 @@ final class UsageStore {
         lastUpdated    = Date()
         isStale        = false
         writeToAppGroup()
+        AlertNotifier.checkThresholds(previous: previousSession, current: sessionPercent)
     }
 
     func markStale() { isStale = true }
@@ -77,7 +80,12 @@ final class UsagePoller {
     // User-Agent must match Claude Code to avoid aggressive rate-limiting (429s)
     private let endpoint   = URL(string: "https://api.claude.ai/api/oauth/usage")!
     private let userAgent  = "claude-code/1.0.0"
-    private let interval: TimeInterval = 60
+
+    // Poll cadence is user-configurable via @AppStorage("refreshInterval").
+    private var interval: TimeInterval {
+        let stored = UserDefaults.standard.integer(forKey: "refreshInterval")
+        return stored > 0 ? TimeInterval(stored) : 60
+    }
 
     init(store: UsageStore, authManager: AuthManager) {
         self.store       = store
@@ -86,12 +94,23 @@ final class UsagePoller {
 
     func start() {
         poll()
+        scheduleTimer()
+    }
+
+    private func scheduleTimer() {
+        timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.poll()
         }
     }
 
     func stop() { timer?.invalidate(); timer = nil }
+
+    /// Triggers an immediate poll and re-aligns the timer to the current interval.
+    func refreshNow() {
+        poll()
+        if timer != nil { scheduleTimer() }
+    }
 
     private func poll() {
         guard let sessionKey = authManager.sessionKey else { return }
@@ -113,5 +132,46 @@ final class UsagePoller {
             }
             DispatchQueue.main.async { self.store.update(from: response) }
         }.resume()
+    }
+}
+
+// MARK: - AlertNotifier
+
+/// Fires local notifications when session usage crosses the 80% / 95%
+/// thresholds upward. Edge-triggered so a single crossing alerts once,
+/// not on every poll. Respects the @AppStorage toggles in SettingsView.
+enum AlertNotifier {
+
+    static func checkThresholds(previous: Double, current: Double) {
+        let defaults = UserDefaults.standard
+        // Toggles default to true when never set (matches SettingsView defaults).
+        let alert80 = defaults.object(forKey: "alertThreshold80") as? Bool ?? true
+        let alert95 = defaults.object(forKey: "alertThreshold95") as? Bool ?? true
+
+        if alert95, crossed(95, previous: previous, current: current) {
+            send(title: "Claude usage at 95%",
+                 body: "You've used 95% of your session quota.")
+        } else if alert80, crossed(80, previous: previous, current: current) {
+            send(title: "Claude usage at 80%",
+                 body: "You've used 80% of your session quota.")
+        }
+    }
+
+    private static func crossed(_ threshold: Double, previous: Double, current: Double) -> Bool {
+        previous < threshold && current >= threshold
+    }
+
+    private static func send(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body  = body
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content:    content,
+            trigger:    nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 }

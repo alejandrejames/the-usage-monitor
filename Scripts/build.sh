@@ -10,6 +10,9 @@
 
 set -euo pipefail
 
+# Always operate from the repo root (this script lives in Scripts/).
+cd "$(dirname "$0")/.."
+
 SCHEME="ClaudeUsage"
 PROJECT="ClaudeUsage.xcodeproj"
 BUILD_DIR="$(pwd)/build"
@@ -22,6 +25,18 @@ echo "╔═══════════════════════�
 echo "║  ClaudeUsage · build pipeline   ║"
 echo "╚══════════════════════════════════╝"
 echo ""
+
+# ── 0. (Re)generate the Xcode project from project.yml ─────────────────────
+# The .xcodeproj is generated, not committed. Regenerate it if XcodeGen is
+# installed (brew install xcodegen) or if it doesn't exist yet.
+if command -v xcodegen >/dev/null 2>&1; then
+  echo "▶ Generating $PROJECT from project.yml…"
+  xcodegen generate
+elif [ ! -d "$PROJECT" ]; then
+  echo "  ✗ $PROJECT not found and XcodeGen is not installed."
+  echo "    Run: brew install xcodegen && xcodegen generate"
+  exit 1
+fi
 
 # ── 1. Clean previous build ────────────────────────────────────────────────
 echo "▶ Cleaning build directory…"
