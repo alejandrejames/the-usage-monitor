@@ -1,0 +1,13 @@
+# Generated Xcode project — regenerate with `xcodegen generate`
+ClaudeUsage.xcodeproj/
+
+# Build output
+build/
+DerivedData/
+
+# Xcode user state
+*.xcuserstate
+xcuserdata/
+
+# macOS
+.DS_Store

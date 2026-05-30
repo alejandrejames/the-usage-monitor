@@ -24,9 +24,10 @@ struct ClaudeUsageApp: App {
         MenuBarExtra {
             // The popover that appears on click is itself Liquid Glass-styled
             if authManager.isAuthenticated {
-                PopoverView(store: store, authManager: authManager)
+                PopoverView(store: store, authManager: authManager, poller: poller)
+                    // Polling runs for the whole authenticated session, not just
+                    // while the popover is open, so the menu-bar % stays current.
                     .onAppear { poller.start() }
-                    .onDisappear { poller.stop() }
             } else {
                 LoginPromptView(showLogin: $showLogin)
             }

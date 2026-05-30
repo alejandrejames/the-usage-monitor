@@ -42,16 +42,24 @@ struct UsageProvider: TimelineProvider {
         let defaults = UserDefaults(suiteName: suiteName)
         let session  = defaults?.double(forKey: "sessionPercent") ?? 0
         let weekly   = defaults?.double(forKey: "weeklyPercent")  ?? 0
-        let sReset   = defaults?.double(forKey: "sessionResetAt").map { Date(timeIntervalSince1970: $0) }
-        let wReset   = defaults?.double(forKey: "weeklyResetAt").map  { Date(timeIntervalSince1970: $0) }
-        let updated  = defaults?.double(forKey: "lastUpdated").map    { Date(timeIntervalSince1970: $0) }
+        let sReset   = date(defaults, "sessionResetAt")
+        let wReset   = date(defaults, "weeklyResetAt")
+        let updated  = date(defaults, "lastUpdated")
         let isStale  = updated.map { Date().timeIntervalSince($0) > 300 } ?? true  // stale after 5 min
 
         return UsageEntry(
             date: Date(), sessionPercent: session, weeklyPercent: weekly,
-            sessionReset: sReset as? Date, weeklyReset: wReset as? Date,
+            sessionReset: sReset, weeklyReset: wReset,
             isStale: isStale
         )
+    }
+
+    /// Reads a stored Unix timestamp and returns a Date, or nil if the key
+    /// was never written. (`double(forKey:)` returns 0 for absent keys, so we
+    /// check presence with `object(forKey:)` first.)
+    private func date(_ defaults: UserDefaults?, _ key: String) -> Date? {
+        guard let defaults, defaults.object(forKey: key) != nil else { return nil }
+        return Date(timeIntervalSince1970: defaults.double(forKey: key))
     }
 }
 
@@ -151,18 +159,30 @@ struct MediumWidgetView: View {
     }
 }
 
+// MARK: - Entry view (picks the layout for the requested family)
+
+struct ClaudeUsageWidgetEntryView: View {
+    @Environment(\.widgetFamily) private var family
+    let entry: UsageEntry
+
+    var body: some View {
+        switch family {
+        case .systemSmall:  SmallWidgetView(entry: entry)
+        default:            MediumWidgetView(entry: entry)
+        }
+    }
+}
+
 // MARK: - Widget configuration
 
 struct ClaudeUsageWidget: Widget {
     let kind = "ClaudeUsageWidget"
 
     var body: some WidgetConfiguration {
+        // Liquid Glass widget background — iOS 26 automatically applies glass
+        // to widgets that set .containerBackground(.clear, for: .widget).
         StaticConfiguration(kind: kind, provider: UsageProvider()) { entry in
-            Group {
-                // WidgetKit picks the right view for the chosen size
-            }
-            // Liquid Glass widget background — iOS 26 automatically applies glass
-            // to widgets with .containerBackground(.clear, for: .widget)
+            ClaudeUsageWidgetEntryView(entry: entry)
         }
         .configurationDisplayName("Claude Usage")
         .description("Track your Claude session and weekly quota at a glance.")
