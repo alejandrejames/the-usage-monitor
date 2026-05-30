@@ -20,7 +20,7 @@ struct PopoverView: View {
     let authManager: AuthManager
     let poller:      UsagePoller
 
-    @State private var showSettings = false
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(spacing: 0) {
@@ -80,7 +80,10 @@ struct PopoverView: View {
                 Spacer()
 
                 Button {
-                    showSettings = true
+                    // Settings is a real Window scene (not a sheet) so it keeps
+                    // its own focus and doesn't dismiss the menu-bar panel.
+                    openWindow(id: "settings")
+                    NSApp.activate(ignoringOtherApps: true)
                 } label: {
                     Label("Settings", systemImage: "gear")
                         .font(.system(size: 12))
@@ -93,8 +96,5 @@ struct PopoverView: View {
         .frame(width: 280)
         // ── Liquid Glass applied to the whole panel ───────────────────────
         .claudeGlass()
-        .sheet(isPresented: $showSettings) {
-            SettingsView(authManager: authManager)
-        }
     }
 }

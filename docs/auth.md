@@ -1,121 +1,62 @@
 # Authentication
 
-## Method: WebView session cookie
+> **History:** The original design used a WebView login that captured the
+> `claude.ai` `sessionKey` cookie. That never worked: `api.claude.ai` does not
+> resolve, and `claude.ai/api/oauth/usage` is behind a Cloudflare managed bot
+> challenge that a plain `URLSession` (with only `sessionKey`) cannot pass —
+> it returns a 403 "Just a moment…" page. The app now reuses Claude Code's
+> OAuth token instead. See `real-usage-api-contract` in project memory.
 
-ClaudeUsage uses **only** the WebView login method. No OAuth token paste, no `claude setup-token`, no API keys.
+## How it works now
 
-This is the correct approach for a claude.ai subscription user because:
-- It reads your own session the same way the browser does.
-- It requires no developer credentials beyond a claude.ai account.
-- It is not subject to the February 2026 Anthropic policy that restricts OAuth tokens in third-party tools.
+There is **no in-app login**. The macOS app reuses the OAuth credential that
+the `claude` CLI (Claude Code) already stores on the machine.
 
----
+### macOS
 
-## Login flow (step by step)
-
-```
-User opens app (first launch)
-    │
-    ▼
-AuthManager.init() checks Keychain
-    │
-    ├─ sessionKey found → isAuthenticated = true → skip login
-    │
-    └─ not found → show LoginPromptView in popover
-                        │
-                        ▼
-                  User taps "Sign in with Claude…"
-                        │
-                        ▼
-                  LoginView presented as sheet
-                        │
-                        ▼
-                  WKWebView loads https://claude.ai/login
-                        │
-                        ▼
-                  AuthManager attached as WKHTTPCookieStoreObserver
-                        │
-                        ▼
-                  User logs in (Google / email / SSO)
-                        │
-                        ▼
-                  cookiesDidChange fires
-                  AuthManager finds cookie where name == "sessionKey"
-                        │
-                        ▼
-                  KeychainService.save(sessionCookie.value)
-                  isAuthenticated = true
-                  Observer removed from cookie store
-                        │
-                        ▼
-                  LoginView auto-dismisses (onChange of isAuthenticated)
-                        │
-                        ▼
-                  PopoverView shows live usage data
-```
-
----
-
-## WKWebView configuration
-
-```swift
-let config  = WKWebViewConfiguration()
-let webView = WKWebView(frame: .zero, configuration: config)
-webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_0) AppleWebKit/537.36 Safari/537.36"
-```
-
-The custom User-Agent presents the WebView as a desktop Safari browser so claude.ai renders its full login page rather than a stripped mobile view.
-
----
-
-## Cookie detection
-
-```swift
-func cookiesDidChange(in store: WKHTTPCookieStore) {
-    store.getAllCookies { cookies in
-        if let sessionCookie = cookies.first(where: { $0.name == "sessionKey" }) {
-            KeychainService.save(sessionCookie.value)
-            self.isAuthenticated = true
-            self.webView?.configuration.websiteDataStore
-                .httpCookieStore.remove(self)   // unsubscribe once captured
-        }
-    }
-}
-```
-
-The observer is removed immediately after capture to avoid unnecessary callbacks.
-
----
-
-## Keychain storage
+`AuthManager` reads a generic-password item from the **login keychain**:
 
 | Attribute | Value |
 |---|---|
 | `kSecClass` | `kSecClassGenericPassword` |
-| `kSecAttrService` | `com.you.claudeusage` |
-| `kSecAttrAccount` | `claude_session_key` |
-| `kSecAttrAccessible` | `kSecAttrAccessibleWhenUnlocked` |
+| `kSecAttrService` | `Claude Code-credentials` |
 
-`kSecAttrAccessibleWhenUnlocked` means the item is accessible whenever the device is unlocked. It survives app restarts and system reboots. It is not synced to iCloud Keychain.
+The item's value is JSON. The relevant part:
 
-`KeychainService.save()` always calls `SecItemDelete` before `SecItemAdd` to replace any stale entry cleanly.
+```json
+{
+  "claudeAiOauth": {
+    "accessToken":  "sk-ant-oat01-…",   // Bearer token for the usage API
+    "refreshToken": "sk-ant-ort01-…",
+    "expiresAt":    1780135050513,        // epoch milliseconds
+    "subscriptionType": "pro"
+  }
+}
+```
 
----
+- `AuthManager.accessToken` returns `claudeAiOauth.accessToken`, or `nil` if the
+  item is missing or `expiresAt` has passed.
+- `AuthManager.isAuthenticated` is true when a non-expired token is present.
+- `AuthManager.refreshAvailability()` re-reads the keychain (call after a 401 or
+  when the app becomes active). Claude Code refreshes the token out-of-band; the
+  app simply re-reads it.
+- There is **no `logout()`**. The user manages auth with the `claude` CLI.
 
-## Logout
+**The macOS app must not be sandboxed.** A sandboxed app cannot read a
+login-keychain item it did not create. `ClaudeUsage.entitlements` therefore
+omits `com.apple.security.app-sandbox`. This rules out App Store distribution,
+which was never a goal.
 
-`AuthManager.logout()` calls `KeychainService.delete()` and sets `isAuthenticated = false`. This immediately shows the login prompt in the popover. The WebView session (cookies in the WKWebView data store) is **not** cleared — the user remains logged in to claude.ai on the web.
+### iOS
 
----
+iOS cannot read the Mac's keychain and has no token of its own. The iOS
+`AuthManager` branch reports `isAuthenticated` based on whether the App Group
+has ever received synced data, and `UsageStore.loadFromAppGroup()` reads the
+percentages the macOS app wrote. iOS never calls the network.
 
-## Session expiry
+## Token expiry
 
-The `sessionKey` cookie does not have a fixed TTL documented publicly. If polling returns an auth error (HTTP 401 or 403), `UsageStore.markStale()` is called and the menu bar icon fades. The user must sign out and log in again via the Settings panel to refresh the session.
-
-No automatic re-authentication is implemented. This is intentional — silent re-auth would require storing credentials beyond the session key.
-
----
-
-## iOS notes
-
-`LoginView.swift` contains both `NSViewRepresentable` (macOS) and `UIViewRepresentable` (iOS) implementations gated with `#if os(macOS)`. Both load the same URL and use the same `AuthManager`. The `AuthManager` itself is platform-agnostic — it uses `WebKit` which is available on both platforms.
+If a poll returns HTTP 401, the token is expired/revoked. `UsageStore.markStale()`
+fades the menu-bar icon and `AuthManager.refreshAvailability()` re-checks the
+keychain. Running any `claude` command refreshes the stored token; the app picks
+up the new value on its next poll or re-check.

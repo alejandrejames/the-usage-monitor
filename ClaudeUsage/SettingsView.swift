@@ -1,4 +1,4 @@
-// SettingsView.swift — Settings panel with Liquid Glass card sections
+// SettingsView.swift — native macOS grouped Settings form
 
 import SwiftUI
 import UserNotifications
@@ -13,86 +13,68 @@ struct SettingsView: View {
     @State private var notificationsGranted = false
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-
-                    // ── Account card ──────────────────────────────────────
-                    sectionCard("Account", icon: "person.badge.key") {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("claude.ai session")
-                                    .font(.system(size: 13, weight: .medium))
-                                Text(authManager.isAuthenticated ? "Connected via WebView" : "Not signed in")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if authManager.isAuthenticated {
-                                Button("Sign out", role: .destructive) {
-                                    authManager.logout()
-                                    dismiss()
-                                }
-                                .buttonStyle(.glass)
-                                .font(.system(size: 12))
-                            }
-                        }
-                    }
-
-                    // ── Polling card ──────────────────────────────────────
-                    sectionCard("Polling interval", icon: "clock.arrow.2.circlepath") {
-                        Picker("", selection: $refreshInterval) {
-                            Text("30 s").tag(30)
-                            Text("60 s").tag(60)
-                            Text("2 min").tag(120)
-                            Text("5 min").tag(300)
-                        }
-                        .pickerStyle(.segmented)
-                    }
-
-                    // ── Alerts card ───────────────────────────────────────
-                    sectionCard("Usage alerts", icon: "bell.badge") {
-                        Toggle("Alert at 80%", isOn: $alertThreshold80)
-                            .toggleStyle(.switch)
-                        Toggle("Alert at 95%", isOn: $alertThreshold95)
-                            .toggleStyle(.switch)
-
-                        if !notificationsGranted {
-                            Button("Enable notifications") { requestNotifications() }
-                                .buttonStyle(.glass)
-                                .font(.system(size: 12))
-                        }
+        Form {
+            // ── Account ───────────────────────────────────────────────────
+            Section("Account") {
+                LabeledContent("Claude Code credential") {
+                    HStack(spacing: 8) {
+                        statusBadge
+                        Button("Re-check") { authManager.refreshAvailability() }
                     }
                 }
-                .padding(16)
             }
-            .navigationTitle("Settings")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }.buttonStyle(.glass)
+
+            // ── Refresh ───────────────────────────────────────────────────
+            Section("Refresh") {
+                Picker("Polling interval", selection: $refreshInterval) {
+                    Text("30 seconds").tag(30)
+                    Text("60 seconds").tag(60)
+                    Text("2 minutes").tag(120)
+                    Text("5 minutes").tag(300)
+                }
+            }
+
+            // ── Alerts ────────────────────────────────────────────────────
+            Section("Usage alerts") {
+                Toggle("Alert at 80%", isOn: $alertThreshold80)
+                Toggle("Alert at 95%", isOn: $alertThreshold95)
+
+                if !notificationsGranted {
+                    LabeledContent("Notifications are off") {
+                        Button("Enable…") { requestNotifications() }
+                    }
+                }
+            }
+
+            // ── App ───────────────────────────────────────────────────────
+            Section {
+                Button("Quit Claude Usage", role: .destructive) {
+                    NSApp.terminate(nil)
                 }
             }
         }
-        .frame(width: 360, height: 440)
+        .formStyle(.grouped)
+        .frame(width: 380, height: 420)
+        .navigationTitle("Settings")
         .onAppear { checkNotificationStatus() }
     }
 
-    // MARK: - Section card builder (Liquid Glass)
+    // MARK: - Account status badge
 
     @ViewBuilder
-    private func sectionCard<Content: View>(
-        _ title: String, icon: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label(title, systemImage: icon)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-            content()
+    private var statusBadge: some View {
+        if authManager.isAuthenticated {
+            let plan = authManager.subscriptionPlan.map { " · \($0.capitalized)" } ?? ""
+            Label("Connected\(plan)", systemImage: "checkmark.circle.fill")
+                .labelStyle(.titleAndIcon)
+                .font(.system(size: 12))
+                .foregroundStyle(.green)
+        } else {
+            Label("Not found", systemImage: "exclamationmark.triangle.fill")
+                .labelStyle(.titleAndIcon)
+                .font(.system(size: 12))
+                .foregroundStyle(.orange)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .claudeGlass()   // ← Liquid Glass on each section card
     }
 
     // MARK: - Notifications

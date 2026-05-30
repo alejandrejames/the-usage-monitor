@@ -4,16 +4,30 @@
 import Foundation
 import UserNotifications
 
-// MARK: - Response model
+// MARK: - Usage snapshot
 
-struct UsageResponse: Codable {
-    struct Limits: Codable {
-        let sessionUsagePercent:  Double
-        let weeklyUsagePercent:   Double
-        let sessionResetAt:       Date
-        let weeklyResetAt:        Date
+/// Usage parsed from the `anthropic-ratelimit-unified-*` response headers that
+/// accompany a normal /v1/messages call (the technique mature usage monitors
+/// use). `5h` is the session window; `7d` is the weekly window.
+struct UsageSnapshot {
+    let sessionPercent: Double      // 0–100
+    let weeklyPercent:  Double      // 0–100
+    let sessionResetAt: Date?
+    let weeklyResetAt:  Date?
+
+    /// Builds a snapshot from HTTP response headers. The `*-utilization`
+    /// headers are fractions (0–1); `*-reset` headers are epoch seconds.
+    init?(headers: [AnyHashable: Any]) {
+        func double(_ key: String) -> Double? {
+            (headers[key] as? String).flatMap(Double.init)
+        }
+        guard let s = double("anthropic-ratelimit-unified-5h-utilization"),
+              let w = double("anthropic-ratelimit-unified-7d-utilization") else { return nil }
+        sessionPercent = (s * 100).rounded()    // headers are coarse; integer % is plenty
+        weeklyPercent  = (w * 100).rounded()
+        sessionResetAt = double("anthropic-ratelimit-unified-5h-reset").map { Date(timeIntervalSince1970: $0) }
+        weeklyResetAt  = double("anthropic-ratelimit-unified-7d-reset").map { Date(timeIntervalSince1970: $0) }
     }
-    let limits: Limits
 }
 
 // MARK: - UsageStore
@@ -27,33 +41,18 @@ final class UsageStore {
     var lastUpdated:     Date?  = nil
     var isStale:         Bool   = false     // true if last poll failed
 
-    // App Group suite name — must match WidgetKit target entitlement
-    private let suiteName = "group.com.you.claudeusage"
-
-    func update(from response: UsageResponse) {
-        let l = response.limits
+    func update(from snapshot: UsageSnapshot) {
         let previousSession = sessionPercent
-        sessionPercent = l.sessionUsagePercent
-        weeklyPercent  = l.weeklyUsagePercent
-        sessionResetAt = l.sessionResetAt
-        weeklyResetAt  = l.weeklyResetAt
+        sessionPercent = snapshot.sessionPercent
+        weeklyPercent  = snapshot.weeklyPercent
+        sessionResetAt = snapshot.sessionResetAt
+        weeklyResetAt  = snapshot.weeklyResetAt
         lastUpdated    = Date()
         isStale        = false
-        writeToAppGroup()
         AlertNotifier.checkThresholds(previous: previousSession, current: sessionPercent)
     }
 
     func markStale() { isStale = true }
-
-    // Write display-safe (non-secret) data so the iOS widget can read it
-    private func writeToAppGroup() {
-        guard let defaults = UserDefaults(suiteName: suiteName) else { return }
-        defaults.set(sessionPercent,               forKey: "sessionPercent")
-        defaults.set(weeklyPercent,                forKey: "weeklyPercent")
-        defaults.set(sessionResetAt?.timeIntervalSince1970,  forKey: "sessionResetAt")
-        defaults.set(weeklyResetAt?.timeIntervalSince1970,   forKey: "weeklyResetAt")
-        defaults.set(Date().timeIntervalSince1970,           forKey: "lastUpdated")
-    }
 
     // Formatted reset countdowns
     var sessionResetString: String { resetString(for: sessionResetAt) }
@@ -76,31 +75,50 @@ final class UsagePoller {
     private let authManager: AuthManager
     private var timer:       Timer?
 
-    // Endpoint: Anthropic's internal subscription usage endpoint
-    // User-Agent must match Claude Code to avoid aggressive rate-limiting (429s)
-    private let endpoint   = URL(string: "https://api.claude.ai/api/oauth/usage")!
-    private let userAgent  = "claude-code/1.0.0"
+    // We send a minimal (1-token) /v1/messages request and read usage from the
+    // `anthropic-ratelimit-unified-*` response headers — the same technique
+    // mature Claude usage monitors use, and more durable than /api/oauth/usage.
+    private let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
 
     // Poll cadence is user-configurable via @AppStorage("refreshInterval").
     private var interval: TimeInterval {
         let stored = UserDefaults.standard.integer(forKey: "refreshInterval")
         return stored > 0 ? TimeInterval(stored) : 60
     }
+    private var lastScheduledInterval: TimeInterval = 0
+    private var defaultsObserver: NSObjectProtocol?
 
     init(store: UsageStore, authManager: AuthManager) {
         self.store       = store
         self.authManager = authManager
     }
 
+    deinit {
+        if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
+    }
+
     func start() {
         poll()
         scheduleTimer()
+        observeIntervalChanges()
     }
 
     private func scheduleTimer() {
         timer?.invalidate()
+        lastScheduledInterval = interval
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             self?.poll()
+        }
+    }
+
+    // Reschedule live when the user changes the polling interval in Settings.
+    private func observeIntervalChanges() {
+        guard defaultsObserver == nil else { return }
+        defaultsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            guard let self, self.timer != nil, self.interval != self.lastScheduledInterval else { return }
+            self.scheduleTimer()
         }
     }
 
@@ -112,25 +130,46 @@ final class UsagePoller {
         if timer != nil { scheduleTimer() }
     }
 
+    // A minimal request body — the response's rate-limit headers carry the
+    // usage data regardless of the (discarded) completion.
+    private static let body = try! JSONSerialization.data(withJSONObject: [
+        "model":      "claude-haiku-4-5-20251001",
+        "max_tokens": 1,
+        "messages":   [["role": "user", "content": "."]],
+    ])
+
     private func poll() {
-        guard let sessionKey = authManager.sessionKey else { return }
+        guard let token = authManager.accessToken else { return }
 
         var request = URLRequest(url: endpoint)
-        request.setValue("sessionKey=\(sessionKey)", forHTTPHeaderField: "Cookie")
-        request.setValue(userAgent,                   forHTTPHeaderField: "User-Agent")
-        request.setValue("application/json",          forHTTPHeaderField: "Accept")
+        request.httpMethod = "POST"
+        request.httpBody   = Self.body
+        request.setValue("Bearer \(token)",      forHTTPHeaderField: "Authorization")
+        request.setValue("oauth-2025-04-20",     forHTTPHeaderField: "anthropic-beta")
+        request.setValue("2023-06-01",           forHTTPHeaderField: "anthropic-version")
+        request.setValue("application/json",     forHTTPHeaderField: "content-type")
 
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        URLSession.shared.dataTask(with: request) { [weak self] _, urlResponse, _ in
+            guard let self, let http = urlResponse as? HTTPURLResponse else {
+                DispatchQueue.main.async { self?.store.markStale() }
+                return
+            }
 
-        URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
-            guard let self else { return }
-            guard let data, error == nil,
-                  let response = try? decoder.decode(UsageResponse.self, from: data) else {
+            // A 401 means the token is no longer valid (expired / revoked).
+            if http.statusCode == 401 {
+                DispatchQueue.main.async {
+                    self.store.markStale()
+                    self.authManager.refreshAvailability()
+                }
+                return
+            }
+
+            // Usage headers ride along on both 200 and 429 (rate-limited) responses.
+            guard let snapshot = UsageSnapshot(headers: http.allHeaderFields) else {
                 DispatchQueue.main.async { self.store.markStale() }
                 return
             }
-            DispatchQueue.main.async { self.store.update(from: response) }
+            DispatchQueue.main.async { self.store.update(from: snapshot) }
         }.resume()
     }
 }
