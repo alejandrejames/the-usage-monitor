@@ -24,4 +24,7 @@ xcuserdata/
 *.mobileprovision
 *.cer
 secrets.*
-.claude/.credentials.json
+
+# Claude Code local config / instructions — not for the public repo
+.claude/
+CLAUDE.md
