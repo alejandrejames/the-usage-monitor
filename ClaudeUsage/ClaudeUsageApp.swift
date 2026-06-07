@@ -2,6 +2,7 @@
 // Uses MenuBarExtra (SwiftUI native) so the app lives entirely in the menu bar.
 
 import SwiftUI
+import AppKit
 
 @main
 struct ClaudeUsageApp: App {
@@ -53,25 +54,128 @@ struct ClaudeUsageApp: App {
     }
 }
 
+// MARK: - Menu bar display mode
+
+/// What the menu-bar icon shows. Persisted via @AppStorage("menuBarDisplay").
+enum MenuBarDisplay: String, CaseIterable, Identifiable {
+    case session
+    case weekly
+    case both
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .session: return "Session only"
+        case .weekly:  return "Weekly only"
+        case .both:    return "Session + Weekly"
+        }
+    }
+}
+
 // MARK: - Menu bar label
 
 struct MenuBarLabel: View {
     let store: UsageStore
     let isAuthenticated: Bool
 
-    var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "chart.bar.fill")
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(isAuthenticated ? store.sessionPercent.usageColor : .secondary)
+    @AppStorage("menuBarDisplay") private var displayRaw = MenuBarDisplay.session.rawValue
+    private var display: MenuBarDisplay { MenuBarDisplay(rawValue: displayRaw) ?? .session }
 
-            if isAuthenticated {
-                Text(String(format: "%.0f%%", store.sessionPercent))
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .foregroundStyle(store.sessionPercent.usageColor)
+    var body: some View {
+        Group {
+            if !isAuthenticated {
+                Image(systemName: "chart.bar.fill")
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.secondary)
+            } else {
+                switch display {
+                case .session:
+                    metric(icon: "timer", percent: store.sessionPercent)
+                case .weekly:
+                    metric(icon: "calendar", percent: store.weeklyPercent)
+                case .both:
+                    // SwiftUI clips a multi-line label to one status-bar row, so
+                    // the second line vanishes. Render both rows into an NSImage
+                    // sized to the status bar height instead — guarantees both fit.
+                    Image(nsImage: Self.stackedImage(
+                        session: store.sessionPercent,
+                        weekly:  store.weeklyPercent))
+                }
             }
         }
         .opacity(store.isStale ? 0.5 : 1)
+    }
+
+    /// One icon + percentage row, coloured by usage level (single-line modes).
+    @ViewBuilder
+    private func metric(icon: String, percent: Double, size: CGFloat = 12) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .symbolRenderingMode(.hierarchical)
+                .font(.system(size: size))
+                .foregroundStyle(percent.usageColor)
+            Text(String(format: "%.0f%%", percent))
+                .font(.system(size: size, weight: .semibold, design: .rounded))
+                .foregroundStyle(percent.usageColor)
+        }
+    }
+
+    // MARK: - Two-line menu-bar image
+
+    /// Draws two icon+percentage rows stacked vertically into an NSImage that
+    /// fits the menu bar's height. Each row is tinted by its usage colour.
+    private static func stackedImage(session: Double, weekly: Double) -> NSImage {
+        let rowFont   = NSFont.systemFont(ofSize: 9, weight: .semibold)
+        let iconSize: CGFloat = 9
+        let rowHeight: CGFloat = 11
+        let spacing:   CGFloat = 1
+        let totalHeight = rowHeight * 2 + spacing
+
+        // Measure widest row so the image is wide enough for both.
+        func rowWidth(_ percent: Double) -> CGFloat {
+            let text = String(format: " %.0f%%", percent)
+            let textW = (text as NSString).size(withAttributes: [.font: rowFont]).width
+            return iconSize + 3 + textW
+        }
+        let width = ceil(max(rowWidth(session), rowWidth(weekly))) + 2
+
+        let image = NSImage(size: NSSize(width: width, height: totalHeight))
+        image.lockFocus()
+
+        func tintedSymbol(_ name: String, color: NSColor) -> NSImage? {
+            let config = NSImage.SymbolConfiguration(pointSize: iconSize, weight: .semibold)
+            guard let base = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+                .withSymbolConfiguration(config) else { return nil }
+            let size = base.size
+            let out = NSImage(size: size)
+            out.lockFocus()
+            base.draw(in: NSRect(origin: .zero, size: size))
+            color.set()
+            NSRect(origin: .zero, size: size).fill(using: .sourceAtop)
+            out.unlockFocus()
+            return out
+        }
+
+        func drawRow(icon: String, percent: Double, y: CGFloat) {
+            let color = NSColor(percent.usageColor)
+            if let symbol = tintedSymbol(icon, color: color) {
+                let h = symbol.size.height
+                symbol.draw(at: NSPoint(x: 1, y: y + (rowHeight - h) / 2), from: .zero,
+                            operation: .sourceOver, fraction: 1)
+            }
+            let text = String(format: "%.0f%%", percent)
+            let attrs: [NSAttributedString.Key: Any] = [.font: rowFont, .foregroundColor: color]
+            (text as NSString).draw(at: NSPoint(x: iconSize + 4, y: y), withAttributes: attrs)
+        }
+
+        // y origin is bottom-left; draw weekly (bottom) then session (top).
+        drawRow(icon: "calendar", percent: weekly,  y: 0)
+        drawRow(icon: "timer",    percent: session, y: rowHeight + spacing)
+
+        image.unlockFocus()
+        image.isTemplate = false   // keep our colours, don't let the bar tint it
+        return image
     }
 }
 
