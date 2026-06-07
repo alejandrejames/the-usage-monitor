@@ -8,6 +8,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage("refreshInterval")   private var refreshInterval   = 60
+    @AppStorage("menuBarDisplay")    private var menuBarDisplay    = MenuBarDisplay.session.rawValue
     @AppStorage("alertThreshold80")  private var alertThreshold80  = true
     @AppStorage("alertThreshold95")  private var alertThreshold95  = true
     @State private var notificationsGranted = false
@@ -20,6 +21,15 @@ struct SettingsView: View {
                     HStack(spacing: 8) {
                         statusBadge
                         Button("Re-check") { authManager.refreshAvailability() }
+                    }
+                }
+            }
+
+            // ── Menu bar ──────────────────────────────────────────────────
+            Section("Menu bar") {
+                Picker("Display", selection: $menuBarDisplay) {
+                    ForEach(MenuBarDisplay.allCases) { mode in
+                        Text(mode.title).tag(mode.rawValue)
                     }
                 }
             }

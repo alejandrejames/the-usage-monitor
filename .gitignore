@@ -11,3 +11,17 @@ xcuserdata/
 
 # macOS
 .DS_Store
+
+# Secrets / credentials — never commit
+.credentials.json
+*.credentials.json
+*credentials*.json
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.mobileprovision
+*.cer
+secrets.*
+.claude/.credentials.json
