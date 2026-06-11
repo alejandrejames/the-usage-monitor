@@ -3,6 +3,7 @@
 
 import Foundation
 import UserNotifications
+import Network
 
 // MARK: - Usage snapshot
 
@@ -88,6 +89,11 @@ final class UsagePoller {
     private var lastScheduledInterval: TimeInterval = 0
     private var defaultsObserver: NSObjectProtocol?
 
+    // Network reachability: poll immediately when connectivity is restored.
+    private let pathMonitor = NWPathMonitor()
+    private let pathQueue   = DispatchQueue(label: "com.you.claudeusage.network")
+    private var wasOnline   = true
+
     init(store: UsageStore, authManager: AuthManager) {
         self.store       = store
         self.authManager = authManager
@@ -95,12 +101,14 @@ final class UsagePoller {
 
     deinit {
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
+        pathMonitor.cancel()
     }
 
     func start() {
         poll()
         scheduleTimer()
         observeIntervalChanges()
+        observeReachability()
     }
 
     private func scheduleTimer() {
@@ -120,6 +128,21 @@ final class UsagePoller {
             guard let self, self.timer != nil, self.interval != self.lastScheduledInterval else { return }
             self.scheduleTimer()
         }
+    }
+
+    // Watch network reachability; when the link is restored (offline → online),
+    // poll once immediately so usage refreshes without waiting for the next tick.
+    // Uses the cached token, so reconnecting does not trigger a keychain prompt.
+    private func observeReachability() {
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            guard let self else { return }
+            let online = path.status == .satisfied
+            defer { self.wasOnline = online }
+            if online, !self.wasOnline {
+                DispatchQueue.main.async { [weak self] in self?.poll() }
+            }
+        }
+        pathMonitor.start(queue: pathQueue)
     }
 
     func stop() { timer?.invalidate(); timer = nil }
@@ -156,10 +179,12 @@ final class UsagePoller {
             }
 
             // A 401 means the token is no longer valid (expired / revoked).
+            // Drop the cached token first so refreshAvailability() re-reads the
+            // keychain — Claude Code may have rotated the token out-of-band.
             if http.statusCode == 401 {
                 DispatchQueue.main.async {
                     self.store.markStale()
-                    self.authManager.refreshAvailability()
+                    self.authManager.refreshAvailability()   // invalidates + re-reads keychain
                 }
                 return
             }

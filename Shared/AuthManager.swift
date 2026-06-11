@@ -55,28 +55,65 @@ final class AuthManager {
     var isAuthenticated: Bool = false
     var subscriptionPlan: String? = nil
 
+    // In-memory cache of the last good token. Each keychain read can trigger the
+    // macOS ACL prompt (the item is owned by the `claude` CLI), so we read once
+    // and reuse the cached value for routine polls — including after a network
+    // reconnect. We only hit the keychain again when the cache is empty, the
+    // token has expired, or a 401 forces a re-check (see invalidateToken()).
+    private var cachedToken:  String? = nil
+    private var cachedExpiry: Date?   = nil
+
     init() {
         refreshAvailability()
     }
 
     /// Current OAuth bearer token, or nil if unavailable/expired.
+    /// Reuses the in-memory cache when still valid to avoid a keychain prompt.
     var accessToken: String? {
-        guard let creds = ClaudeCodeKeychain.loadToken() else { return nil }
-        if let expiry = creds.expiresAt, expiry < Date() { return nil }   // expired
-        return creds.token
+        if let token = cachedToken, let expiry = cachedExpiry, expiry >= Date() {
+            return token                       // cache hit — no keychain access
+        }
+        if let token = cachedToken, cachedExpiry == nil {
+            return token                       // cached, no expiry metadata
+        }
+        return reloadToken()                   // cache miss/expired — read keychain
+    }
+
+    /// Drops the in-memory token so the next `accessToken` re-reads the keychain.
+    /// Call after a 401: Claude Code may have refreshed the token out-of-band.
+    func invalidateToken() {
+        cachedToken  = nil
+        cachedExpiry = nil
     }
 
     /// Re-evaluates whether a usable credential is present. Call after a 401
     /// or when the app becomes active, since the token can be refreshed or
     /// revoked by Claude Code out-of-band.
     func refreshAvailability() {
-        if let creds = ClaudeCodeKeychain.loadToken() {
-            let valid = creds.expiresAt.map { $0 >= Date() } ?? true
-            isAuthenticated = valid
-            subscriptionPlan = creds.plan
-        } else {
+        invalidateToken()
+        _ = reloadToken()
+    }
+
+    // MARK: - Keychain read + cache fill
+
+    @discardableResult
+    private func reloadToken() -> String? {
+        guard let creds = ClaudeCodeKeychain.loadToken() else {
+            cachedToken = nil; cachedExpiry = nil
             isAuthenticated = false
             subscriptionPlan = nil
+            return nil
+        }
+        let valid = creds.expiresAt.map { $0 >= Date() } ?? true
+        subscriptionPlan = creds.plan
+        isAuthenticated  = valid
+        if valid {
+            cachedToken  = creds.token
+            cachedExpiry = creds.expiresAt
+            return creds.token
+        } else {
+            cachedToken = nil; cachedExpiry = nil
+            return nil
         }
     }
 }
