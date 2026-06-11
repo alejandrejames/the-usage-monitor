@@ -11,6 +11,29 @@ to bump both and tag a release.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-06-11
+
+### Added
+- **macOS desktop widget** (Small / Medium / Large) showing session and weekly
+  usage, with the same colour thresholds as the app. Reads a display-safe
+  snapshot from an App Group; it never networks or touches the keychain.
+- Option to **hide the menu-bar icon** (Settings → Menu bar) so the widget can
+  be the only surface. Re-launching the app reopens Settings, so it's never
+  unreachable.
+- The Settings window now opens automatically on launch / re-launch.
+- App icon (timer + spark) wired into the asset catalog.
+
+### Fixed
+- Closing the Settings window no longer quits the app — it keeps running in the
+  menu bar / as the widget's data source. Quit is explicit (Settings → Quit).
+- "Show menu bar icon" toggle now reliably hides/shows the item and persists the
+  choice (driven by App-owned state rather than an `@AppStorage` binding that
+  SwiftUI didn't re-evaluate).
+
+### Security
+- Only display-safe usage values cross the App Group boundary; the OAuth token
+  is never written to the shared container.
+
 ## [1.0.0] - 2026-06-11
 
 ### Added

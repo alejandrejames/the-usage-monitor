@@ -5,6 +5,9 @@ import UserNotifications
 
 struct SettingsView: View {
     let authManager: AuthManager
+    /// Bound to the App's menu-bar visibility @State (drives MenuBarExtra).
+    /// Toggling this both shows/hides the item and persists to UserDefaults.
+    @Binding var showMenuBarIcon: Bool
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage("refreshInterval")   private var refreshInterval   = 60
@@ -27,10 +30,23 @@ struct SettingsView: View {
 
             // ── Menu bar ──────────────────────────────────────────────────
             Section("Menu bar") {
+                Toggle("Show menu bar icon", isOn: $showMenuBarIcon)
+                    .onChange(of: showMenuBarIcon) { _, shown in
+                        // Persist so the choice survives relaunch (App seeds
+                        // its @State from this key at startup).
+                        UserDefaults.standard.set(shown, forKey: "showMenuBarIcon")
+                    }
                 Picker("Display", selection: $menuBarDisplay) {
                     ForEach(MenuBarDisplay.allCases) { mode in
                         Text(mode.title).tag(mode.rawValue)
                     }
+                }
+                .disabled(!showMenuBarIcon)
+
+                if !showMenuBarIcon {
+                    Text("Hidden — re-launch ClaudeUsage to reopen Settings, or use the desktop widget.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
             }
 
