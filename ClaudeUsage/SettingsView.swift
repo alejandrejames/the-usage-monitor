@@ -56,8 +56,9 @@ struct SettingsView: View {
                 }
             }
 
-            // ── App ───────────────────────────────────────────────────────
+            // ── About ─────────────────────────────────────────────────────
             Section {
+                LabeledContent("Version", value: Self.appVersion)
                 Button("Quit Claude Usage", role: .destructive) {
                     NSApp.terminate(nil)
                 }
@@ -67,6 +68,16 @@ struct SettingsView: View {
         .frame(width: 380, height: 420)
         .navigationTitle("Settings")
         .onAppear { checkNotificationStatus() }
+    }
+
+    // MARK: - App version
+
+    /// "1.0.0 (1)" — short version + build, read from the app bundle.
+    private static var appVersion: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "—"
+        let build = info?["CFBundleVersion"] as? String ?? "—"
+        return "\(short) (\(build))"
     }
 
     // MARK: - Account status badge
