@@ -20,8 +20,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.10"
-    MARKETING_VERSION: "1.0.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "1.1.0"
+    CURRENT_PROJECT_VERSION: "2"
     DEVELOPMENT_TEAM: "YOUR_TEAM_ID"    # Personal Team (free Apple ID: <your-apple-id-email>)
     CODE_SIGN_STYLE: Automatic
     SWIFT_EMIT_LOC_STRINGS: "YES"
