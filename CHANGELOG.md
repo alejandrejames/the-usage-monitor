@@ -11,6 +11,8 @@ to bump both and tag a release.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-06-11
+
 ### Added
 - **macOS desktop widget** (Small / Medium / Large) showing session and weekly
   usage, with the same colour thresholds as the app. Reads a display-safe
