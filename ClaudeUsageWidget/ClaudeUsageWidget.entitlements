@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- WidgetKit extensions MUST be sandboxed (an unsandboxed appex is silently
+	     refused by pkd and never registers). The shared channel to the app is
+	     the App Group container; only display-safe usage values cross it, never
+	     the token. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.you.claudeusage</string>
+	</array>
+</dict>
+</plist>

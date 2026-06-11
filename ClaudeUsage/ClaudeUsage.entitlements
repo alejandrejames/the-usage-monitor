@@ -5,5 +5,12 @@
 	<!-- App Sandbox is intentionally OFF: the app reads Claude Code's OAuth
 	     token from the login keychain (an item it did not create), which a
 	     sandboxed app cannot access. Personal, non-App-Store tool. -->
+
+	<!-- App Group: shares display-safe usage values with the desktop widget.
+	     The OAuth token is never written here. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.you.claudeusage</string>
+	</array>
 </dict>
 </plist>

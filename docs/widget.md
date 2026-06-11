@@ -2,119 +2,70 @@
 
 ## Overview
 
-`ClaudeUsageWidget` is a WidgetKit extension that displays usage data on the iPhone home screen. It does **not** call the Anthropic API directly — it reads from the App Group `UserDefaults` container written by `UsageStore` in the macOS or iOS app.
+`ClaudeUsageWidget` is a WidgetKit extension that shows Claude usage on the
+**macOS desktop / Notification Center** (macOS Sonoma+). It does **not** call the
+Anthropic API and has **no keychain access** — it reads a display-safe snapshot
+from the App Group `group.com.you.claudeusage` that the menu-bar app writes after
+each poll.
 
----
+```
+UsagePoller (app)  ──poll──▶  UsageStore.update()
+                                   │ writes display-safe values (no token)
+                                   ▼
+                       App Group: group.com.you.claudeusage
+                                   │ WidgetCenter.reloadAllTimelines()
+                                   ▼
+                       ClaudeUsageWidget (separate process)
+```
+
+## Data contract
+
+The shared payload is `WidgetUsage` (see `Shared/SharedUsage.swift`), stored as
+JSON under the key `widgetUsage` in `UserDefaults(suiteName:)`:
+
+| Field | Meaning |
+|---|---|
+| `sessionPercent` / `weeklyPercent` | 0–100 utilisation |
+| `sessionResetAt` / `weeklyResetAt` | reset timestamps |
+| `lastUpdated` | last successful poll |
+| `plan` | subscription plan (e.g. "pro") |
+| `isStale` | last poll failed / offline |
+
+The OAuth token is **never** written here (CLAUDE.md security rule). Read/write go
+through `SharedUsage.read()` / `SharedUsage.write(_:)`.
 
 ## Supported sizes
 
 | Family | View | Content |
 |---|---|---|
-| `systemSmall` | `SmallWidgetView` | Session % large number + mini bar |
-| `systemMedium` | `MediumWidgetView` | Session + Weekly side-by-side |
+| `.systemSmall` | `SmallView` | Session % ring, colour-coded |
+| `.systemMedium` | `MediumView` | Session + Weekly bars + reset countdowns |
+| `.systemLarge` | `LargeView` | Both bars, plan, "updated Xm ago" |
 
-Lock screen and StandBy sizes are not implemented in v1.
+All sizes reuse `Double.usageColor` and `UsageBar` from `Shared/Theme.swift`, so
+colours match the app: green < 70 %, amber < 90 %, red ≥ 90 %.
 
----
+## Refresh
 
-## Timeline
+The app drives prompt refreshes via `WidgetCenter.shared.reloadAllTimelines()`
+on every write. As a fallback (e.g. app closed), the timeline also refreshes on a
+~15-minute policy so countdowns don't drift. WidgetKit does not guarantee exact
+timing and may batch refreshes.
 
-`UsageProvider` conforms to `TimelineProvider`:
+When the last poll failed, `WidgetUsage.isStale` is true and the views dim
+slightly and show a "disconnected" indicator.
 
-```swift
-func getTimeline(in context: Context, completion: @escaping (Timeline<UsageEntry>) -> Void) {
-    let entry    = readEntry()
-    let nextDate = Calendar.current.date(byAdding: .minute, value: 15, to: Date())!
-    completion(Timeline(entries: [entry], policy: .after(nextDate)))
-}
-```
+## Target setup (handled by project.yml)
 
-WidgetKit refreshes every 15 minutes. This is the minimum practical interval — WidgetKit does not guarantee exact timing and may batch refreshes.
+The `ClaudeUsageWidget` target is an `app-extension` with the WidgetKit extension
+point. Its sources are `ClaudeUsageWidget/` plus only `Shared/Theme.swift` and
+`Shared/SharedUsage.swift` — **not** `AuthManager`/`UsageStore` (no networking in
+the widget). The widget has its own `Assets.xcassets` carrying the `UsageGreen/
+Amber/Red` colours so `usageColor` resolves in the widget bundle.
 
-If the app has not polled recently (> 5 minutes), `UsageEntry.isStale = true` and widgets should visually indicate stale data (e.g. reduced opacity on the percentage label).
+## App Group capability (free Personal Team)
 
----
-
-## Reading App Group data
-
-```swift
-private func readEntry() -> UsageEntry {
-    let defaults = UserDefaults(suiteName: "group.com.you.claudeusage")
-    let session  = defaults?.double(forKey: "sessionPercent") ?? 0
-    let weekly   = defaults?.double(forKey: "weeklyPercent")  ?? 0
-    let sReset   = defaults?.double(forKey: "sessionResetAt").map { Date(timeIntervalSince1970: $0) }
-    let wReset   = defaults?.double(forKey: "weeklyResetAt").map  { Date(timeIntervalSince1970: $0) }
-    let updated  = defaults?.double(forKey: "lastUpdated").map    { Date(timeIntervalSince1970: $0) }
-    let isStale  = updated.map { Date().timeIntervalSince($0) > 300 } ?? true
-
-    return UsageEntry(
-        date: Date(),
-        sessionPercent: session,
-        weeklyPercent: weekly,
-        sessionReset: sReset,
-        weeklyReset: wReset,
-        isStale: isStale
-    )
-}
-```
-
-App Group `UserDefaults` keys:
-
-| Key | Type stored | Meaning |
-|---|---|---|
-| `sessionPercent` | `Double` | 0–100 |
-| `weeklyPercent` | `Double` | 0–100 |
-| `sessionResetAt` | `Double` (Unix timestamp) | When the 5-hour window resets |
-| `weeklyResetAt` | `Double` (Unix timestamp) | When the weekly quota resets |
-| `lastUpdated` | `Double` (Unix timestamp) | When `UsageStore` last wrote |
-
----
-
-## Liquid Glass in widgets
-
-iOS 26 widgets automatically receive a Liquid Glass background when you use `.containerBackground(.clear, for: .widget)`. No additional modifier is needed.
-
-```swift
-var body: some View {
-    VStack { content }
-        .padding(14)
-        .containerBackground(.clear, for: .widget)  // ← glass applied by system
-}
-```
-
-Do **not** call `.claudeGlass()` or `.glassEffect()` inside a widget view — widget extensions do not have access to the same rendering context and the modifier will be ignored or crash.
-
----
-
-## Xcode setup for the widget target
-
-1. In Xcode, add a new target: File → New → Target → Widget Extension.
-2. Name it `ClaudeUsageWidget`. Bundle ID: `com.you.claudeusage.widget`.
-3. Uncheck "Include Configuration Intent" (this is a static widget).
-4. Add the App Groups capability: `group.com.you.claudeusage`.
-5. Add `Theme.swift` to the widget target (for `Double.usageColor`).
-6. Do **not** add `AuthManager.swift` or `UsageStore.swift` to the widget target.
-
----
-
-## Placeholder and snapshot
-
-`getSnapshot` is called by WidgetKit when showing a preview in the widget gallery. Use realistic-looking data:
-
-```swift
-func placeholder(in context: Context) -> UsageEntry {
-    UsageEntry(date: Date(), sessionPercent: 72, weeklyPercent: 41,
-               sessionReset: nil, weeklyReset: nil, isStale: false)
-}
-```
-
-`getSnapshot` should return the same as `readEntry()` (real data if available, placeholder values if not).
-
----
-
-## App Group entitlement format
-
-The entitlement key in the `.entitlements` file for the widget extension must be:
+Both targets carry the entitlement:
 
 ```xml
 <key>com.apple.security.application-groups</key>
@@ -123,4 +74,13 @@ The entitlement key in the `.entitlements` file for the widget extension must be
 </array>
 ```
 
-Xcode adds this automatically when you enable App Groups in the Signing & Capabilities tab.
+The free Personal Team supports **local** App Groups (unlike iCloud KVS, which is
+why the iOS sync was dropped). On first build, open Xcode → Signing &
+Capabilities for both `ClaudeUsage` and `ClaudeUsageWidget` and confirm the App
+Group is checked; Xcode registers it on first build.
+
+## Adding the widget
+
+Right-click the desktop → **Edit Widgets**, find **Claude Usage**, and drop the
+size you want. (The menu-bar app must have run at least once so a snapshot
+exists; otherwise the widget shows an "Open ClaudeUsage" placeholder.)

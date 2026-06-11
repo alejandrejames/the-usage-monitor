@@ -7,9 +7,21 @@ import AppKit
 @main
 struct ClaudeUsageApp: App {
 
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     @State private var authManager = AuthManager()
     @State private var store       = UsageStore()
     private var poller: UsagePoller
+
+    // When false, the menu-bar item is hidden and the widget is the only surface.
+    // Re-launching the app opens Settings, so it's never truly unreachable.
+    //
+    // `isInserted` is driven by this @State (not @AppStorage directly): the
+    // SwiftUI MenuBarExtra(isInserted:) binding only re-evaluates reliably from
+    // App-owned @State. We seed it from UserDefaults and keep it in sync with an
+    // observer so the Settings toggle takes effect immediately.
+    @State private var showMenuBarIcon: Bool =
+        UserDefaults.standard.object(forKey: "showMenuBarIcon") as? Bool ?? true
 
     init() {
         let auth  = AuthManager()
@@ -28,7 +40,9 @@ struct ClaudeUsageApp: App {
 
     var body: some Scene {
         // ── Menu bar icon ──────────────────────────────────────────────────
-        MenuBarExtra {
+        // `isInserted` toggles the item's presence; bound to App @State which is
+        // kept in sync with the "showMenuBarIcon" preference (see onChange below).
+        MenuBarExtra(isInserted: $showMenuBarIcon) {
             // The popover that appears on click is itself Liquid Glass-styled
             if authManager.isAuthenticated {
                 PopoverView(store: store, authManager: authManager, poller: poller)
@@ -48,9 +62,45 @@ struct ClaudeUsageApp: App {
         // A standalone Window (not a sheet) so changing a control doesn't
         // resign focus and dismiss the menu-bar panel.
         Window("Claude Usage Settings", id: "settings") {
-            SettingsView(authManager: authManager)
+            SettingsView(authManager: authManager,
+                         showMenuBarIcon: $showMenuBarIcon)
+                .onAppear { NSApp.activate(ignoringOtherApps: true) }
         }
         .windowResizability(.contentSize)
+    }
+}
+
+// MARK: - App delegate (lifecycle + open Settings on launch / re-launch)
+
+/// Manages app lifecycle. The app must keep running with no windows open (it
+/// lives in the menu bar / as a widget source), and only quit via the Settings
+/// "Quit" button. Also resurfaces Settings on launch and re-launch — the escape
+/// hatch when the menu-bar icon is hidden.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        DispatchQueue.main.async { Self.openSettings() }
+    }
+
+    // Closing the Settings window must NOT quit the app — it keeps running in
+    // the menu bar / as the widget's data source. Quit is explicit (Settings).
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
+    // Fired when the app is launched again while already running (e.g. from
+    // Finder/Dock) — reopen Settings so the user can re-enable the menu bar.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        Self.openSettings()
+        return true
+    }
+
+    static func openSettings() {
+        NSApp.activate(ignoringOtherApps: true)
+        // macOS 14+ uses the "Settings…" action; fall back to the older selector.
+        if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
+            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+        }
     }
 }
 

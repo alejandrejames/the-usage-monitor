@@ -4,9 +4,10 @@
 # This file is build tooling, not an app dependency. The app uses only native
 # Apple frameworks (no SPM / CocoaPods).
 #
-# iOS/widget targets were removed: the only Mac→iPhone sync path (iCloud KVS)
+# The iOS target was removed: the only Mac→iPhone sync path (iCloud KVS)
 # requires a paid Apple Developer account, which this project (free Personal
-# Team) does not have. See README "Known gaps".
+# Team) does not have. The macOS desktop widget (ClaudeUsageWidget) uses a
+# local App Group, which the free Personal Team supports.
 
 name: ClaudeUsage
 
@@ -34,6 +35,8 @@ targets:
     sources:
       - path: Shared
       - path: ClaudeUsage
+    dependencies:
+      - target: ClaudeUsageWidget          # embed the widget extension
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.you.claudeusage
@@ -43,3 +46,22 @@ targets:
         CODE_SIGN_ENTITLEMENTS: ClaudeUsage/ClaudeUsage.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+
+  # ── macOS desktop widget extension ─────────────────────────────────────────
+  ClaudeUsageWidget:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: ClaudeUsageWidget           # includes Assets.xcassets (Usage colors)
+      - path: Shared/Theme.swift          # UsageBar + usageColor
+      - path: Shared/SharedUsage.swift    # App Group read
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.you.claudeusage.widget
+        CODE_SIGN_ENTITLEMENTS: ClaudeUsageWidget/ClaudeUsageWidget.entitlements
+    info:
+      path: ClaudeUsageWidget/Info.plist
+      properties:
+        # WidgetKit extension point.
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
