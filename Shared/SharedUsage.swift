@@ -16,7 +16,7 @@ enum AppGroup {
 
 /// The display-safe usage values the widget reads. Codable so it can be stored
 /// as JSON in the App Group's UserDefaults suite. Deliberately contains no token.
-struct WidgetUsage: Codable {
+struct WidgetUsage: Codable, Equatable {
     var sessionPercent: Double
     var weeklyPercent:  Double
     var sessionResetAt: Date?
@@ -24,6 +24,17 @@ struct WidgetUsage: Codable {
     var lastUpdated:    Date?
     var plan:           String?
     var isStale:        Bool
+
+    /// True when the displayed data is identical, ignoring `lastUpdated` (which
+    /// changes on every poll). Used to skip redundant widget writes/reloads.
+    func sameDisplay(as other: WidgetUsage) -> Bool {
+        sessionPercent == other.sessionPercent &&
+        weeklyPercent  == other.weeklyPercent  &&
+        sessionResetAt == other.sessionResetAt &&
+        weeklyResetAt  == other.weeklyResetAt  &&
+        plan           == other.plan           &&
+        isStale        == other.isStale
+    }
 
     /// "resets in 3h 44m" style countdown, shared by the app popover and widget.
     static func resetString(for date: Date?, now: Date = Date()) -> String {
@@ -57,48 +68,48 @@ enum SharedUsage {
     // the token.
     private static let fileName = "usage.json"
 
-    /// The widget's sandbox container Documents path (deterministic from the
-    /// widget bundle id). Both processes target this same absolute path.
-    private static var fileURL: URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home
+    /// The handoff file as the UNSANDBOXED app sees it: an absolute path into the
+    /// widget's sandbox container, built from the app's real home directory.
+    /// Used only on the write side. (Inside the widget, `homeDirectoryForCurrentUser`
+    /// is the container root, so this path would be wrong there — the widget uses
+    /// `widgetLocalURL` instead.)
+    private static var appWriteURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Containers/com.you.claudeusage.widget/Data/Documents", isDirectory: true)
             .appendingPathComponent(fileName)
     }
 
+    /// The handoff file as the SANDBOXED widget sees it: its own Documents
+    /// directory, which resolves to the same physical file the app wrote.
+    private static var widgetReadURL: URL? {
+        try? FileManager.default
+            .url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+            .appendingPathComponent(fileName)
+    }
+
+    /// Last snapshot we wrote, to skip redundant writes + widget reloads.
+    private static var lastWritten: WidgetUsage?
+
     /// Persists the snapshot to the widget's container and refreshes the widget.
     /// Called from the (unsandboxed) app, which can write into the widget's box.
+    /// No-ops when the displayed values are unchanged (ignoring `lastUpdated`), so
+    /// polling an idle account doesn't burn WidgetKit's reload budget.
     static func write(_ usage: WidgetUsage) {
+        if let last = lastWritten, last.sameDisplay(as: usage) { return }
         guard let data = try? JSONEncoder().encode(usage) else { return }
-        let dir = fileURL.deletingLastPathComponent()
+        lastWritten = usage
+        let dir = appWriteURL.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try? data.write(to: fileURL, options: .atomic)
+        try? data.write(to: appWriteURL, options: .atomic)
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadAllTimelines()
         #endif
     }
 
-    /// Reads the last snapshot. From inside the widget, `homeDirectoryForCurrentUser`
-    /// resolves to the sandbox container root, so this reads the same file.
+    /// Reads the last snapshot from the widget's own Documents directory, or nil
+    /// if none yet. Only meaningful inside the widget process.
     static func read() -> WidgetUsage? {
-        // Inside the sandboxed widget, the home dir IS the container, so the
-        // path above resolves to "<container>/Data/Documents/usage.json".
-        // Try that first, then the app-side absolute path as a fallback.
-        let candidates = [widgetLocalURL, fileURL]
-        for url in candidates {
-            if let url, let data = try? Data(contentsOf: url),
-               let usage = try? JSONDecoder().decode(WidgetUsage.self, from: data) {
-                return usage
-            }
-        }
-        return nil
-    }
-
-    /// Inside the widget sandbox, the Documents directory resolves correctly via
-    /// the standard API — no hardcoded path needed on the read side.
-    private static var widgetLocalURL: URL? {
-        try? FileManager.default
-            .url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
-            .appendingPathComponent(fileName)
+        guard let url = widgetReadURL, let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(WidgetUsage.self, from: data)
     }
 }

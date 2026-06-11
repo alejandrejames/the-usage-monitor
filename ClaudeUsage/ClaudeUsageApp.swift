@@ -79,6 +79,11 @@ struct ClaudeUsageApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Only auto-open Settings when the menu-bar icon is hidden — otherwise the
+        // icon is the entry point and popping Settings on every launch is noise.
+        // (Re-launching while running always opens it; see shouldHandleReopen.)
+        let iconVisible = UserDefaults.standard.object(forKey: "showMenuBarIcon") as? Bool ?? true
+        guard !iconVisible else { return }
         DispatchQueue.main.async { Self.openSettings() }
     }
 
