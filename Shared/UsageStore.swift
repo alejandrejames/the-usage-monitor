@@ -35,12 +35,13 @@ struct UsageSnapshot {
 
 @Observable
 final class UsageStore {
-    var sessionPercent:  Double = 0
-    var weeklyPercent:   Double = 0
-    var sessionResetAt:  Date?  = nil
-    var weeklyResetAt:   Date?  = nil
-    var lastUpdated:     Date?  = nil
-    var isStale:         Bool   = false     // true if last poll failed
+    var sessionPercent:  Double  = 0
+    var weeklyPercent:   Double  = 0
+    var sessionResetAt:  Date?   = nil
+    var weeklyResetAt:   Date?   = nil
+    var lastUpdated:     Date?   = nil
+    var isStale:         Bool    = false    // true if last poll failed
+    var plan:            String? = nil      // last-known subscription plan (for the widget)
 
     func update(from snapshot: UsageSnapshot) {
         let previousSession = sessionPercent
@@ -51,22 +52,29 @@ final class UsageStore {
         lastUpdated    = Date()
         isStale        = false
         AlertNotifier.checkThresholds(previous: previousSession, current: sessionPercent)
+        syncToWidget()
     }
 
-    func markStale() { isStale = true }
-
-    // Formatted reset countdowns
-    var sessionResetString: String { resetString(for: sessionResetAt) }
-    var weeklyResetString:  String { resetString(for: weeklyResetAt) }
-
-    private func resetString(for date: Date?) -> String {
-        guard let date else { return "—" }
-        let diff = date.timeIntervalSinceNow
-        if diff <= 0 { return "resetting…" }
-        let h = Int(diff / 3600)
-        let m = Int((diff.truncatingRemainder(dividingBy: 3600)) / 60)
-        return h > 0 ? "resets in \(h)h \(m)m" : "resets in \(m)m"
+    func markStale() {
+        isStale = true
+        syncToWidget()
     }
+
+    /// Writes display-safe values (never the token) to the App Group for the widget.
+    private func syncToWidget() {
+        SharedUsage.write(WidgetUsage(
+            sessionPercent: sessionPercent,
+            weeklyPercent:  weeklyPercent,
+            sessionResetAt: sessionResetAt,
+            weeklyResetAt:  weeklyResetAt,
+            lastUpdated:    lastUpdated,
+            plan:           plan,
+            isStale:        isStale))
+    }
+
+    // Formatted reset countdowns (shared formatter, identical to the widget).
+    var sessionResetString: String { WidgetUsage.resetString(for: sessionResetAt) }
+    var weeklyResetString:  String { WidgetUsage.resetString(for: weeklyResetAt) }
 }
 
 // MARK: - UsagePoller
@@ -194,7 +202,10 @@ final class UsagePoller {
                 DispatchQueue.main.async { self.store.markStale() }
                 return
             }
-            DispatchQueue.main.async { self.store.update(from: snapshot) }
+            DispatchQueue.main.async {
+                self.store.plan = self.authManager.subscriptionPlan
+                self.store.update(from: snapshot)
+            }
         }.resume()
     }
 }
