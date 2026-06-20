@@ -143,6 +143,13 @@ struct MenuBarLabel: View {
                 Image(systemName: "chart.bar.fill")
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(.secondary)
+            } else if store.isStale {
+                // Last poll failed — no connection to the internet or Claude
+                // Code. Show an explicit "disconnected" icon instead of a faded
+                // usage percentage, which looks like a real (low) reading.
+                Image(systemName: "wifi.slash")
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.secondary)
             } else {
                 switch display {
                 case .session:
@@ -159,7 +166,6 @@ struct MenuBarLabel: View {
                 }
             }
         }
-        .opacity(store.isStale ? 0.5 : 1)
     }
 
     /// One icon + percentage row, coloured by usage level (single-line modes).
