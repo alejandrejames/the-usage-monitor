@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ExportOptions.plist.example — template for the committed ExportOptions.plist.
+
+  ExportOptions.plist is committed with a placeholder teamID so no personal
+  identifier lives in the repo. To build a signed archive, replace YOUR_TEAM_ID
+  in ExportOptions.plist with your real Personal Team ID (see
+  project.yml.example for how to find it), then keep the edit out of git:
+
+      git update-index --skip-worktree ExportOptions.plist
+
+  The ad-hoc fallback in Scripts/build.sh does NOT use this file, so a local
+  ad-hoc build works even with the placeholder left in place.
+-->
+<plist version="1.0">
+<dict>
+  <!-- "development" = Personal Team (free Apple ID), no paid cert required -->
+  <key>method</key>
+  <string>development</string>
+
+  <key>signingStyle</key>
+  <string>automatic</string>
+
+  <!-- Replace with your Personal Team ID (10 chars, e.g. ABCDE12345). -->
+  <key>teamID</key>
+  <string>YOUR_TEAM_ID</string>
+
+  <key>destination</key>
+  <string>export</string>
+
+  <key>stripSwiftSymbols</key>
+  <true/>
+</dict>
+</plist>

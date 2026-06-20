@@ -10,7 +10,7 @@
   <key>signingStyle</key>
   <string>automatic</string>
 
-  <!-- Personal Team ID (free Apple ID: <your-apple-id-email>) -->
+  <!-- Personal Team ID — set locally; see ExportOptions.plist.example -->
   <key>teamID</key>
   <string>YOUR_TEAM_ID</string>
 
