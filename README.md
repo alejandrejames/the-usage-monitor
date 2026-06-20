@@ -98,6 +98,45 @@ xattr -rd com.apple.quarantine /Applications/ClaudeUsage.app   # first launch
 
 ---
 
+## Keychain access — stopping the password prompt
+
+On first launch (and occasionally after) macOS shows:
+
+> **"ClaudeUsage" wants to use your confidential information stored in
+> "Claude Code-credentials" in your keychain.**
+
+This is expected and **not** a bug. The app reads Claude Code's OAuth token,
+which the `claude` CLI stores as a login-keychain item. macOS guards every
+keychain item with an access-control list (ACL) that, by default, lists only
+the app that created it (the `claude` CLI). When ClaudeUsage — a different
+binary — reads the item, macOS asks you to authorize it.
+
+**Fix: click "Always Allow" (not just "Allow") and enter your password once.**
+That adds ClaudeUsage to the item's ACL permanently, and you won't be prompted
+on future launches.
+
+You can also pre-authorize it manually without waiting for the dialog:
+open **Keychain Access → search `Claude Code-credentials` → double-click → the
+"Access Control" tab → add `/Applications/ClaudeUsage.app`** to the allowed
+list.
+
+**Caveat — the prompt can return after a token refresh.** When your OAuth token
+auto-refreshes, the `claude` CLI deletes and re-creates the keychain item; the
+new item's ACL again lists only the CLI, so you'll be prompted once more. Click
+"Always Allow" again. This is infrequent (it tracks token refresh, not the
+60-second poll cycle — the app caches the token in memory between polls, so
+routine polling never prompts).
+
+**Why there's no code fix.** On this setup the token lives *only* in the
+keychain — there is no plaintext `~/.claude/.credentials.json` to read instead
+(`~/.claude.json` holds account metadata, not the token). The ACL prompt is the
+keychain's security model working as designed; no app-side change can bypass it
+without weakening that protection. "Always Allow" is the supported answer, and
+it is a local-machine authorization only — it changes nothing about the app's
+Terms-of-Service standing (see the ToS notice above).
+
+---
+
 ## Data flow
 
 ```
