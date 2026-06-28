@@ -1,5 +1,7 @@
 # ClaudeUsage
 
+![ClaudeUsage](etc/usagemonitor.jpg)
+
 A macOS menu-bar app that shows your Claude subscription usage (5-hour session %
 and 7-day weekly %) with Liquid Glass styling (macOS 26). macOS-only.
 
