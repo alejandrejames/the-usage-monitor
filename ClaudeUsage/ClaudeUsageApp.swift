@@ -11,7 +11,9 @@ struct ClaudeUsageApp: App {
 
     @State private var authManager = AuthManager()
     @State private var store       = UsageStore()
+    @State private var statusStore = StatusStore()
     private var poller: UsagePoller
+    private var statusPoller: StatusPoller
 
     // When false, the menu-bar item is hidden and the widget is the only surface.
     // Re-launching the app opens Settings, so it's never truly unreachable.
@@ -31,6 +33,16 @@ struct ClaudeUsageApp: App {
         _authManager = State(initialValue: auth)
         _store       = State(initialValue: store)
 
+        let statusStore  = StatusStore()
+        let statusPoller = StatusPoller(store: statusStore)
+        self.statusPoller = statusPoller
+        _statusStore      = State(initialValue: statusStore)
+
+        // Service status is unauthenticated, so it polls regardless of whether
+        // a Claude Code token is present — an outage is worth showing even when
+        // the usage reading is unavailable.
+        DispatchQueue.main.async { statusPoller.start() }
+
         // Start polling at launch (not when the popover opens) so the menu-bar
         // percentage is populated immediately. The poller no-ops without a token.
         if auth.isAuthenticated {
@@ -45,7 +57,11 @@ struct ClaudeUsageApp: App {
         MenuBarExtra(isInserted: $showMenuBarIcon) {
             // The popover that appears on click is itself Liquid Glass-styled
             if authManager.isAuthenticated {
-                PopoverView(store: store, authManager: authManager, poller: poller)
+                PopoverView(store: store,
+                            authManager: authManager,
+                            poller: poller,
+                            statusStore: statusStore,
+                            statusPoller: statusPoller)
             } else {
                 NoCredentialView(authManager: authManager)
                     // If the token shows up later, begin polling.
@@ -137,64 +153,82 @@ struct MenuBarLabel: View {
     @AppStorage("menuBarDisplay") private var displayRaw = MenuBarDisplay.session.rawValue
     private var display: MenuBarDisplay { MenuBarDisplay(rawValue: displayRaw) ?? .session }
 
+    /// True when there's no usable reading: no Claude Code token, or the last
+    /// poll failed (offline / API unreachable). The icons stay put; only the
+    /// percentage is replaced by a "cannot connect" glyph.
+    private var isDisconnected: Bool { !isAuthenticated || store.isStale }
+
     var body: some View {
         Group {
-            if !isAuthenticated {
-                Image(systemName: "chart.bar.fill")
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.secondary)
-            } else if store.isStale {
-                // Last poll failed — no connection to the internet or Claude
-                // Code. Show an explicit "disconnected" icon instead of a faded
-                // usage percentage, which looks like a real (low) reading.
-                Image(systemName: "wifi.slash")
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.secondary)
-            } else {
-                switch display {
-                case .session:
-                    metric(icon: "timer", percent: store.sessionPercent)
-                case .weekly:
-                    metric(icon: "calendar", percent: store.weeklyPercent)
-                case .both:
-                    // SwiftUI clips a multi-line label to one status-bar row, so
-                    // the second line vanishes. Render both rows into an NSImage
-                    // sized to the status bar height instead — guarantees both fit.
-                    Image(nsImage: Self.stackedImage(
-                        session: store.sessionPercent,
-                        weekly:  store.weeklyPercent))
-                }
+            switch display {
+            case .session:
+                metric(icon: "timer", percent: store.sessionPercent)
+            case .weekly:
+                metric(icon: "calendar", percent: store.weeklyPercent)
+            case .both:
+                // SwiftUI clips a multi-line label to one status-bar row, so
+                // the second line vanishes. Render both rows into an NSImage
+                // sized to the status bar height instead — guarantees both fit.
+                Image(nsImage: Self.stackedImage(
+                    session: store.sessionPercent,
+                    weekly:  store.weeklyPercent,
+                    disconnected: isDisconnected))
             }
         }
     }
 
     /// One icon + percentage row, coloured by usage level (single-line modes).
+    /// When disconnected the icon keeps its place and the number is swapped for
+    /// a slashed-wifi glyph — a faded percentage would read as a real (low) value.
     @ViewBuilder
     private func metric(icon: String, percent: Double, size: CGFloat = 12) -> some View {
+        let tint: Color = isDisconnected ? .secondary : percent.usageColor
         HStack(spacing: 3) {
             Image(systemName: icon)
                 .symbolRenderingMode(.hierarchical)
                 .font(.system(size: size))
-                .foregroundStyle(percent.usageColor)
-            Text(String(format: "%.0f%%", percent))
-                .font(.system(size: size, weight: .semibold, design: .rounded))
-                .foregroundStyle(percent.usageColor)
+                .foregroundStyle(tint)
+            if isDisconnected {
+                Image(systemName: Self.disconnectedSymbol)
+                    .symbolRenderingMode(.hierarchical)
+                    .font(.system(size: size))
+                    .foregroundStyle(tint)
+            } else {
+                Text(String(format: "%.0f%%", percent))
+                    .font(.system(size: size, weight: .semibold, design: .rounded))
+                    .foregroundStyle(tint)
+            }
         }
     }
+
+    /// Glyph that stands in for the percentage when there is no reading.
+    fileprivate static let disconnectedSymbol = "wifi.slash"
 
     // MARK: - Two-line menu-bar image
 
     /// Draws two icon+percentage rows stacked vertically into an NSImage that
     /// fits the menu bar's height. Each row is tinted by its usage colour.
-    private static func stackedImage(session: Double, weekly: Double) -> NSImage {
+    private static func stackedImage(session: Double,
+                                     weekly: Double,
+                                     disconnected: Bool) -> NSImage {
         let rowFont   = NSFont.systemFont(ofSize: 9, weight: .semibold)
         let iconSize: CGFloat = 9
         let rowHeight: CGFloat = 11
         let spacing:   CGFloat = 1
         let totalHeight = rowHeight * 2 + spacing
 
-        // Measure widest row so the image is wide enough for both.
+        let symbolConfig = NSImage.SymbolConfiguration(pointSize: iconSize, weight: .semibold)
+
+        /// Rendered width of an SF Symbol at the row's point size.
+        func symbolWidth(_ name: String) -> CGFloat {
+            NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+                .withSymbolConfiguration(symbolConfig)?.size.width ?? iconSize
+        }
+
+        // Measure widest row so the image is wide enough for both. When
+        // disconnected each row is two symbols wide instead of icon + text.
         func rowWidth(_ percent: Double) -> CGFloat {
+            if disconnected { return iconSize + 3 + symbolWidth(disconnectedSymbol) }
             let text = String(format: " %.0f%%", percent)
             let textW = (text as NSString).size(withAttributes: [.font: rowFont]).width
             return iconSize + 3 + textW
@@ -205,9 +239,8 @@ struct MenuBarLabel: View {
         image.lockFocus()
 
         func tintedSymbol(_ name: String, color: NSColor) -> NSImage? {
-            let config = NSImage.SymbolConfiguration(pointSize: iconSize, weight: .semibold)
             guard let base = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-                .withSymbolConfiguration(config) else { return nil }
+                .withSymbolConfiguration(symbolConfig) else { return nil }
             let size = base.size
             let out = NSImage(size: size)
             out.lockFocus()
@@ -219,11 +252,21 @@ struct MenuBarLabel: View {
         }
 
         func drawRow(icon: String, percent: Double, y: CGFloat) {
-            let color = NSColor(percent.usageColor)
+            let color = disconnected ? NSColor.secondaryLabelColor : NSColor(percent.usageColor)
             if let symbol = tintedSymbol(icon, color: color) {
                 let h = symbol.size.height
                 symbol.draw(at: NSPoint(x: 1, y: y + (rowHeight - h) / 2), from: .zero,
                             operation: .sourceOver, fraction: 1)
+            }
+            // Disconnected: the percentage slot becomes a slashed-wifi glyph so
+            // the timer/calendar icons stay recognisable in place.
+            if disconnected {
+                if let glyph = tintedSymbol(disconnectedSymbol, color: color) {
+                    let h = glyph.size.height
+                    glyph.draw(at: NSPoint(x: iconSize + 4, y: y + (rowHeight - h) / 2),
+                               from: .zero, operation: .sourceOver, fraction: 1)
+                }
+                return
             }
             let text = String(format: "%.0f%%", percent)
             let attrs: [NSAttributedString.Key: Any] = [.font: rowFont, .foregroundColor: color]

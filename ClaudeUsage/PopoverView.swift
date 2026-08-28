@@ -16,11 +16,17 @@
 import SwiftUI
 
 struct PopoverView: View {
-    let store:       UsageStore
-    let authManager: AuthManager
-    let poller:      UsagePoller
+    let store:        UsageStore
+    let authManager:  AuthManager
+    let poller:       UsagePoller
+    let statusStore:  StatusStore
+    let statusPoller: StatusPoller
 
     @Environment(\.openWindow) private var openWindow
+
+    // Collapsed by default — status is a glanceable summary; the per-service
+    // rows are opt-in. Persisted so the panel reopens the way it was left.
+    @AppStorage("statusExpanded") private var statusExpanded = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -67,10 +73,18 @@ struct PopoverView: View {
 
             Divider().opacity(0.25)
 
+            // ── Service status accordion ──────────────────────────────────
+            StatusSection(store: statusStore, isExpanded: $statusExpanded)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+
+            Divider().opacity(0.25)
+
             // ── Action row ────────────────────────────────────────────────
             HStack(spacing: 8) {
                 Button {
                     poller.refreshNow()
+                    statusPoller.refreshNow()
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                         .font(.system(size: 12))
@@ -96,5 +110,99 @@ struct PopoverView: View {
         .frame(width: 280)
         // ── Liquid Glass applied to the whole panel ───────────────────────
         .claudeGlass()
+    }
+}
+
+
+// MARK: - Service status accordion
+
+/// Collapsible list of Claude service statuses (claude.ai, Claude Code), sourced
+/// from status.claude.com. Collapsed it is a single summary row; the chevron
+/// expands it into per-service rows.
+private struct StatusSection: View {
+    let store: StatusStore
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+
+            // ── Summary row (always visible, toggles the accordion) ───────
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+
+                    Text("Service status")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Text(summaryLabel)
+                        .font(.system(size: 11))
+                        .foregroundStyle(summaryColor)
+                    Circle()
+                        .fill(summaryColor)
+                        .frame(width: 7, height: 7)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Service status, \(summaryLabel)")
+            .accessibilityHint(isExpanded ? "Collapse service list" : "Expand service list")
+
+            // ── Per-service rows ─────────────────────────────────────────
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    if store.services.isEmpty {
+                        Text(store.isStale ? "Status unavailable" : "Checking…")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        ForEach(store.services) { service in
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(color(for: service.health))
+                                    .frame(width: 6, height: 6)
+                                Text(service.name)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text(service.health.label)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(color(for: service.health))
+                            }
+                        }
+                    }
+                }
+                .padding(.leading, 17)      // align under the summary text
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    /// Collapsed summary: the worst state across tracked services.
+    private var summaryLabel: String {
+        if store.isStale && store.services.isEmpty { return "Unavailable" }
+        if store.services.isEmpty                  { return "Checking…" }
+        return store.allOperational ? "All systems normal" : store.overall.label
+    }
+
+    private var summaryColor: Color {
+        if store.services.isEmpty { return .secondary }
+        return color(for: store.overall)
+    }
+
+    private func color(for health: ServiceHealth) -> Color {
+        switch health {
+        case .operational:                 return Color("UsageGreen")
+        case .degraded, .maintenance:      return Color("UsageAmber")
+        case .partialOutage, .majorOutage: return Color("UsageRed")
+        case .unknown:                     return .secondary
+        }
     }
 }

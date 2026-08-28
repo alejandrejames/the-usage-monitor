@@ -52,6 +52,25 @@ struct UsageBar: View {
     let label: String
     let resetLabel: String
 
+    /// Width actually rendered. In the app this starts at 0 and springs to
+    /// `value` on appear, so the bar fills in each time the popover is shown
+    /// (the panel is rebuilt on every open, so otherwise it would just pop in at
+    /// its final width). In the widget it is seeded to `value` instead —
+    /// WidgetKit renders a static snapshot, where an appear-time animation would
+    /// never run and would leave the bar stuck at zero width.
+    @State private var displayed: Double
+
+    init(value: Double, label: String, resetLabel: String) {
+        self.value      = value
+        self.label      = label
+        self.resetLabel = resetLabel
+        #if WIDGET_EXTENSION
+        _displayed = State(initialValue: value)     // static snapshot: no animation
+        #else
+        _displayed = State(initialValue: 0)         // app: fill in on appear
+        #endif
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
@@ -71,11 +90,24 @@ struct UsageBar: View {
                         .frame(height: 6)
                     Capsule()
                         .fill(value.usageColor)
-                        .frame(width: geo.size.width * (value / 100), height: 6)
-                        .animation(.spring(duration: 0.4), value: value)
+                        .frame(width: geo.size.width * (displayed / 100), height: 6)
+                        .animation(.spring(duration: 0.4), value: displayed)
                 }
             }
             .frame(height: 6)
+            // Fill on appear, then keep following later polls while open.
+            // The appear-time change is dispatched to the next runloop pass and
+            // wrapped in an explicit withAnimation: set inside onAppear directly,
+            // SwiftUI folds it into the view's first render and shows no motion.
+            #if !WIDGET_EXTENSION
+            .onAppear {
+                displayed = 0
+                DispatchQueue.main.async {
+                    withAnimation(.spring(duration: 0.4)) { displayed = value }
+                }
+            }
+            .onChange(of: value) { _, new in displayed = new }
+            #endif
 
             Text(resetLabel)
                 .font(.system(size: 10))

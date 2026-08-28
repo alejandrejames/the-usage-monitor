@@ -73,8 +73,8 @@ final class UsageStore {
     }
 
     // Formatted reset countdowns (shared formatter, identical to the widget).
-    var sessionResetString: String { WidgetUsage.resetString(for: sessionResetAt) }
-    var weeklyResetString:  String { WidgetUsage.resetString(for: weeklyResetAt) }
+    var sessionResetString: String { WidgetUsage.resetString(for: sessionResetAt, style: .timeOnly) }
+    var weeklyResetString:  String { WidgetUsage.resetString(for: weeklyResetAt,  style: .dateAndTime) }
 }
 
 // MARK: - UsagePoller

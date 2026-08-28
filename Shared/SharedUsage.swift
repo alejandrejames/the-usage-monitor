@@ -36,18 +36,46 @@ struct WidgetUsage: Codable, Equatable {
         isStale        == other.isStale
     }
 
-    /// "resets in 3h 44m" style countdown, shared by the app popover and widget.
-    static func resetString(for date: Date?, now: Date = Date()) -> String {
+    /// How much wall-clock detail to append to the countdown. The 5-hour window
+    /// always resets today or tonight, so the time alone is unambiguous; the
+    /// 7-day window can land on any date, so it needs the weekday and date too.
+    enum ResetStyle {
+        case timeOnly       // "resets in 3h 1m (9:42 PM)"
+        case dateAndTime    // "resets in 44h 41m (Sun, 30 Aug, 2:15 PM)"
+    }
+
+    /// "resets in 3h 44m (9:42 PM)" — countdown plus the reset moment in the
+    /// device's local time zone. Shared by the app popover and widget.
+    static func resetString(for date: Date?,
+                            style: ResetStyle = .timeOnly,
+                            now: Date = Date()) -> String {
         guard let date else { return "—" }
         let diff = date.timeIntervalSince(now)
         if diff <= 0 { return "resetting…" }
         let h = Int(diff / 3600)
         let m = Int((diff.truncatingRemainder(dividingBy: 3600)) / 60)
-        return h > 0 ? "resets in \(h)h \(m)m" : "resets in \(m)m"
+        let countdown = h > 0 ? "resets in \(h)h \(m)m" : "resets in \(m)m"
+        return "\(countdown) (\(absoluteString(for: date, style: style)))"
     }
 
-    var sessionResetString: String { Self.resetString(for: sessionResetAt) }
-    var weeklyResetString:  String { Self.resetString(for: weeklyResetAt) }
+    /// The reset moment formatted in the device's current locale and time zone.
+    private static func absoluteString(for date: Date, style: ResetStyle) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.timeZone = .current
+        switch style {
+        case .timeOnly:
+            // Locale-aware clock time — 12- or 24-hour per the device setting.
+            formatter.setLocalizedDateFormatFromTemplate("jmm")
+        case .dateAndTime:
+            // Weekday, day, month + clock time, ordered per the device locale.
+            formatter.setLocalizedDateFormatFromTemplate("EEEddMMMjmm")
+        }
+        return formatter.string(from: date)
+    }
+
+    var sessionResetString: String { Self.resetString(for: sessionResetAt, style: .timeOnly) }
+    var weeklyResetString:  String { Self.resetString(for: weeklyResetAt,  style: .dateAndTime) }
 }
 
 // MARK: - Read / write
