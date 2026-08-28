@@ -11,7 +11,9 @@ struct ClaudeUsageApp: App {
 
     @State private var authManager = AuthManager()
     @State private var store       = UsageStore()
+    @State private var statusStore = StatusStore()
     private var poller: UsagePoller
+    private var statusPoller: StatusPoller
 
     // When false, the menu-bar item is hidden and the widget is the only surface.
     // Re-launching the app opens Settings, so it's never truly unreachable.
@@ -31,6 +33,16 @@ struct ClaudeUsageApp: App {
         _authManager = State(initialValue: auth)
         _store       = State(initialValue: store)
 
+        let statusStore  = StatusStore()
+        let statusPoller = StatusPoller(store: statusStore)
+        self.statusPoller = statusPoller
+        _statusStore      = State(initialValue: statusStore)
+
+        // Service status is unauthenticated, so it polls regardless of whether
+        // a Claude Code token is present — an outage is worth showing even when
+        // the usage reading is unavailable.
+        DispatchQueue.main.async { statusPoller.start() }
+
         // Start polling at launch (not when the popover opens) so the menu-bar
         // percentage is populated immediately. The poller no-ops without a token.
         if auth.isAuthenticated {
@@ -45,7 +57,11 @@ struct ClaudeUsageApp: App {
         MenuBarExtra(isInserted: $showMenuBarIcon) {
             // The popover that appears on click is itself Liquid Glass-styled
             if authManager.isAuthenticated {
-                PopoverView(store: store, authManager: authManager, poller: poller)
+                PopoverView(store: store,
+                            authManager: authManager,
+                            poller: poller,
+                            statusStore: statusStore,
+                            statusPoller: statusPoller)
             } else {
                 NoCredentialView(authManager: authManager)
                     // If the token shows up later, begin polling.
