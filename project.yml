@@ -58,6 +58,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.you.claudeusage.widget
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: WIDGET_EXTENSION   # UsageBar skips its fill-on-appear animation in the static widget snapshot
         CODE_SIGN_ENTITLEMENTS: ClaudeUsageWidget/ClaudeUsageWidget.entitlements
     info:
       path: ClaudeUsageWidget/Info.plist
