@@ -132,7 +132,43 @@ bespoke fallback window.** Detect whether `org.kde.StatusNotifierWatcher` is on
 the session bus and show a one-time install hint instead (~30 lines versus a
 large, fragile surface).
 
-### 5. Wayland cannot position windows client-side
+### 5. Spike B result — the icon is scaled, not clipped
+
+Rendered two stacked rows with `ab_glyph` at several sizes and inspected the
+PNGs:
+
+| Buffer | Rows | Verdict |
+|---|---|---|
+| 44 × 44 px (macOS @2×) | `43%` / `71%` | clean and legible |
+| 22 × 18 px (macOS @1×) | `43%` / `71%` | readable, tight |
+| 32 px (Windows @200 %) | `43` / `71` | clean |
+| 16 px (Windows @100 %) | `43` / `71` | ~6 px per row — marginal, as expected |
+
+**The pixel-vs-point question is settled, and the answer is benign.** The tao
+backend normalises the icon to a fixed height in *points* and derives the width
+from the source aspect ratio:
+
+```rust
+let (width, height) = self.icon.inner.get_size();
+let icon_height: f64 = 18.0;
+let icon_width: f64 = (width as f64) / (height as f64 / icon_height);
+```
+
+So a 44 px-tall buffer is **scaled down to 18 pt, not clipped** — the risk the
+plan flagged does not exist, and Retina sharpness comes for free by supplying a
+2× buffer. The renderer should therefore target an **aspect ratio**, not an
+absolute pixel height.
+
+Two follow-ups this surfaced:
+
+- **The tray height is 18 pt, not the 22 pt** the menu bar allows, because the
+  backend hardcodes it. Rows must be sized against 18.
+- **A redistributable font still has to be chosen.** The spike used Monaco,
+  which is monospaced (so digits are inherently tabular) but is an Apple system
+  font that cannot be bundled. `ab_glyph` also cannot parse `.ttc` collections,
+  so the bundled file must be a plain `.ttf`.
+
+### 6. Wayland cannot position windows client-side
 
 There is no protocol for "place this window at these coordinates."
 `tauri-plugin-positioner`'s `TrayCenter` **cannot work on Wayland**. This is a
@@ -282,7 +318,7 @@ plan are spiked before any production code is written.
 | Spike | Question | Success criteria |
 |---|---|---|
 | ~~**A. Keychain**~~ **DONE** | Does the fallback chain avoid the prompt from an unsigned binary? | ✅ **Confirmed.** CLI path: no prompt, <40 ms, 5/5 runs. Native path: prompt on first run *and* again after rebuild (cdhash-pinned grant). See Spike A result above |
-| **B. Tray render** | Two-line RGBA legibility, macOS Retina + Windows DPI | Bare `tray-icon` (not full Tauri). Screenshot macOS Retina and Windows @100 %/150 %. Confirm whether Tauri's `Image` treats pixel dimensions as points and clips |
+| ~~**B. Tray render**~~ **DONE (macOS half)** | Two-line RGBA legibility, macOS Retina + Windows DPI | ✅ Rendered with `ab_glyph`; see the Spike B result below. Windows DPI still needs real hardware to confirm on-screen |
 | **C. Linux** | Tray + popover on Bazzite/GNOME Wayland | Tray appears with the AppIndicator extension; confirm the popover cannot be tray-anchored |
 
 ### Phase 1 — Core crate ✅ **DONE**

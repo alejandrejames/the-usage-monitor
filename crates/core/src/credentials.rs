@@ -128,7 +128,10 @@ impl SourceKind {
 }
 
 /// One place a credential might live.
-pub trait CredentialSource {
+///
+/// `Send + Sync` because the host polls from a background thread, so the whole
+/// source chain has to cross thread boundaries inside the shared app state.
+pub trait CredentialSource: Send + Sync {
     fn kind(&self) -> SourceKind;
     /// Returns the raw credential JSON, or an error if this source has nothing.
     fn load_json(&self) -> Result<String, CredentialError>;
@@ -459,8 +462,8 @@ impl CachedCredentials {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::Cell;
-    use std::rc::Rc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     const VALID: &str = r#"{
         "claudeAiOauth": {
@@ -556,19 +559,19 @@ mod tests {
     struct Stub {
         kind: SourceKind,
         result: Result<String, CredentialError>,
-        calls: Rc<Cell<usize>>,
+        calls: Arc<AtomicUsize>,
     }
 
     impl Stub {
         fn ok(kind: SourceKind, json: &str) -> Self {
-            Self { kind, result: Ok(json.to_string()), calls: Rc::new(Cell::new(0)) }
+            Self { kind, result: Ok(json.to_string()), calls: Arc::new(AtomicUsize::new(0)) }
         }
         fn err(kind: SourceKind, e: CredentialError) -> Self {
-            Self { kind, result: Err(e), calls: Rc::new(Cell::new(0)) }
+            Self { kind, result: Err(e), calls: Arc::new(AtomicUsize::new(0)) }
         }
         /// Handle to this stub's call counter.
-        fn counter(&self) -> Rc<Cell<usize>> {
-            Rc::clone(&self.calls)
+        fn counter(&self) -> Arc<AtomicUsize> {
+            Arc::clone(&self.calls)
         }
     }
 
@@ -577,7 +580,7 @@ mod tests {
             self.kind
         }
         fn load_json(&self) -> Result<String, CredentialError> {
-            self.calls.set(self.calls.get() + 1);
+            self.calls.fetch_add(1, Ordering::SeqCst);
             self.result.clone()
         }
     }
@@ -645,7 +648,7 @@ mod tests {
         assert!(cache.token_at(now + 60_000).is_ok());
         assert!(cache.token_at(now + 120_000).is_ok());
 
-        assert_eq!(counter.get(), 1, "should have read exactly once");
+        assert_eq!(counter.load(Ordering::SeqCst), 1, "should have read exactly once");
     }
 
     #[test]
@@ -675,7 +678,7 @@ mod tests {
         cache.invalidate();
         assert!(cache.token_at(now + CachedCredentials::DEFAULT_MIN_REFETCH_MS + 1).is_ok());
 
-        assert_eq!(counter.get(), 2);
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
     }
 
     #[test]
@@ -694,7 +697,7 @@ mod tests {
         }
 
         // One initial read plus at most one more inside the floor window.
-        let calls = counter.get();
+        let calls = counter.load(Ordering::SeqCst);
         assert!(calls <= 2, "expected the floor to collapse the burst, got {calls} reads");
     }
 

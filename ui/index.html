@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Claude Usage</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Shown when no Claude Code credential is available. -->
+  <section id="no-credential" hidden>
+    <div class="empty">
+      <div class="empty-icon">🔑</div>
+      <h1>Claude Code not detected</h1>
+      <p>Sign in with Claude Code (run <code>claude</code> and log in), then re-check.</p>
+      <button id="recheck" class="btn">Re-check</button>
+    </div>
+  </section>
+
+  <!-- Main usage panel. -->
+  <section id="panel" hidden>
+    <header>
+      <h1>Claude Usage</h1>
+      <span id="plan" class="plan"></span>
+    </header>
+
+    <div class="metric">
+      <div class="metric-head">
+        <span class="metric-label">Session</span>
+        <span class="metric-value" id="session-value">—</span>
+      </div>
+      <div class="bar"><div class="bar-fill" id="session-bar"></div></div>
+      <div class="metric-reset" id="session-reset">—</div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-head">
+        <span class="metric-label">Weekly</span>
+        <span class="metric-value" id="weekly-value">—</span>
+      </div>
+      <div class="bar"><div class="bar-fill" id="weekly-bar"></div></div>
+      <div class="metric-reset" id="weekly-reset">—</div>
+    </div>
+
+    <!-- Collapsible service status, matching the Swift popover's accordion. -->
+    <details class="status">
+      <summary>
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-summary">Service status</span>
+      </summary>
+      <ul id="status-list"></ul>
+    </details>
+
+    <footer>
+      <span id="last-updated" class="muted">—</span>
+      <button id="refresh" class="btn btn-small">Refresh</button>
+    </footer>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>

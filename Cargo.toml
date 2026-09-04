@@ -3,7 +3,7 @@
 
 [workspace]
 resolver = "2"
-members = ["crates/core"]
+members = ["crates/core", "crates/app"]
 
 # Single source of truth for the app version (see the versioning migration
 # section in docs/cross-platform.md). project.yml still holds the version for

@@ -1,0 +1,6 @@
+# Tauri v2's dependency tree requires rustc 1.88+. Homebrew's rust (1.85) comes
+# first on PATH here, so this pins the project to rustup's stable toolchain.
+# Invoke via rustup's cargo: ~/.cargo/bin/cargo, or put ~/.cargo/bin ahead of
+# /opt/homebrew/bin in your shell.
+[toolchain]
+channel = "stable"

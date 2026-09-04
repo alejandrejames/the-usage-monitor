@@ -1,0 +1,36 @@
+[package]
+name    = "claudeusage"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description = "Cross-platform menu-bar/tray monitor for Claude subscription usage."
+
+[lib]
+name = "claudeusage"
+path = "src/lib.rs"
+
+[[bin]]
+name = "claudeusage"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+claudeusage-core = { path = "../core" }
+# macos-private-api: required for the transparent popover window.
+tauri        = { version = "2", features = ["tray-icon", "macos-private-api"] }
+tauri-plugin-notification    = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart       = "2"
+serde.workspace      = true
+serde_json.workspace = true
+# Blocking HTTP: the pollers run on their own threads, so no async runtime.
+ureq = { version = "3", features = ["json"] }
+# Tray icon rendering. ab_glyph rasterises the digits; no shaping needed.
+ab_glyph = "0.2"
+
+[features]
+# Tauri's default custom-protocol feature, used for release builds.
+custom-protocol = ["tauri/custom-protocol"]
