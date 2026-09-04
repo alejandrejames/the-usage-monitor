@@ -163,6 +163,18 @@ fn main() {
                 })
                 .build(app)?;
 
+            // Linux: warn once if nothing is listening for tray icons. GNOME
+            // has shipped without StatusNotifierItem support since 3.26, so on
+            // a default GNOME (including Bazzite) the tray silently does not
+            // appear until the AppIndicator extension is installed.
+            #[cfg(target_os = "linux")]
+            {
+                use tray::linux::{detect_tray_host, missing_tray_advice, TrayHost};
+                if detect_tray_host() == TrayHost::Absent {
+                    eprintln!("{}", missing_tray_advice());
+                }
+            }
+
             let handle = app.handle().clone();
             publish(&handle, &state);
             spawn_usage_poller(handle.clone(), Arc::clone(&state));

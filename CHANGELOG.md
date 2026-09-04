@@ -34,6 +34,12 @@ to bump both and tag a release.
   poorly, and a 250 ms debounce stops a tray click from reopening the popover
   that the preceding focus-loss just closed. Written and cross-compile-checked
   but not yet run on Windows hardware.
+- Linux support in `crates/app`: the tray icon is redrawn only when its colour
+  bucket changes (every `set_icon` writes a PNG to `$XDG_RUNTIME_DIR`, so a
+  per-poll redraw would mean ~1,440 writes a day), and a startup check reports
+  when no StatusNotifierWatcher is present with install advice matched to the
+  distro. `packaging/` adds a containerised Ubuntu 22.04 build producing
+  `.deb`, `.rpm` and `.AppImage`; AppImage is recommended for Bazzite.
 
 ## [1.1.0] - 2026-06-11
 

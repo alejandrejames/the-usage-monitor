@@ -1,0 +1,38 @@
+# Linux build environment for ClaudeUsage.
+#
+# Ubuntu 22.04 is the practical baseline: it is the oldest release shipping
+# webkit2gtk-4.1, which Tauri v2 requires (4.0 is not enough).
+#
+# Build:  docker build -f packaging/Dockerfile.linux -t claudeusage-linux .
+# Check:  docker run --rm claudeusage-linux cargo check -p claudeusage
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# libayatana-appindicator3 is the tray backend (StatusNotifierItem).
+# libxdo is needed by tray-icon's predefined menu items on Linux.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        curl \
+        ca-certificates \
+        pkg-config \
+        libwebkit2gtk-4.1-dev \
+        libgtk-3-dev \
+        libayatana-appindicator3-dev \
+        libxdo-dev \
+        librsvg2-dev \
+        libssl-dev \
+        patchelf \
+        file \
+    && rm -rf /var/lib/apt/lists/*
+
+# Tauri v2's dependency tree needs rustc 1.88+.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain stable --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# clippy/rustfmt are not in the minimal profile, but the Linux build should be
+# lintable the same way the host one is.
+RUN rustup component add clippy rustfmt
+
+WORKDIR /src

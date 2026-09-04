@@ -6,10 +6,13 @@
 //! - **Windows** does the same at the DPI-queried size; `set_title` is
 //!   unsupported there, so the numbers must live in the bitmap. `set_tooltip`
 //!   carries the detail.
-//! - **Linux** uses a *static* icon plus `set_title`, because `set_icon` there
-//!   writes a PNG to disk on every call — at a 60 s poll that would be ~1,440
-//!   writes a day.
+//! - **Linux** puts the numbers in `set_title` and redraws the icon only when
+//!   its colour bucket changes, because `set_icon` there writes a PNG to disk
+//!   on every call — at a 60 s poll that would be ~1,440 writes a day. See the
+//!   `linux` submodule.
 
+#[cfg(target_os = "linux")]
+pub mod linux;
 pub mod render;
 pub mod sizing;
 
@@ -27,7 +30,9 @@ fn rows_for(snapshot: &AppSnapshot) -> Vec<Row> {
     }
 }
 
-/// Human-readable summary for the tooltip.
+/// Human-readable summary for the tooltip. Linux has no tooltip support, so
+/// this is unused there.
+#[cfg(not(target_os = "linux"))]
 fn tooltip_for(snapshot: &AppSnapshot) -> String {
     if !snapshot.is_authenticated {
         return "Claude Code not detected".into();
@@ -48,8 +53,10 @@ pub fn update(tray: &TrayIcon, snapshot: &AppSnapshot) {
 
     #[cfg(target_os = "linux")]
     {
-        // Numbers go in the title; the icon stays put. Re-rendering here would
-        // write a PNG to $XDG_RUNTIME_DIR on every poll.
+        use linux::IconBuckets;
+        use std::sync::Mutex;
+
+        // Numbers go in the title, which is cheap to set.
         let title = if snapshot.is_stale || !snapshot.is_authenticated {
             "-- · --".to_string()
         } else {
@@ -60,7 +67,27 @@ pub fn update(tray: &TrayIcon, snapshot: &AppSnapshot) {
             )
         };
         let _ = tray.set_title(Some(title));
-        // set_tooltip is unsupported on Linux, so nothing to set here.
+        // set_tooltip is unsupported on Linux; the detail lives in the menu.
+
+        // The icon is only redrawn when its colour bucket changes. Every
+        // set_icon here writes a PNG into $XDG_RUNTIME_DIR, so redrawing per
+        // poll would mean ~1,440 writes a day. `set_title` also needs *an*
+        // icon present to display at all, hence setting one at least once.
+        static LAST_BUCKETS: Mutex<Option<IconBuckets>> = Mutex::new(None);
+
+        let buckets = if snapshot.is_stale || !snapshot.is_authenticated {
+            IconBuckets::disconnected()
+        } else {
+            IconBuckets::of(Some(snapshot.session_percent), Some(snapshot.weekly_percent))
+        };
+
+        let mut last = LAST_BUCKETS.lock().expect("bucket lock");
+        if last.as_ref() != Some(&buckets) {
+            let rendered = render::render_at(&rows, sizing::tray_icon_height());
+            let image = Image::new_owned(rendered.rgba, rendered.width, rendered.height);
+            let _ = tray.set_icon(Some(image));
+            *last = Some(buckets);
+        }
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -81,9 +108,6 @@ pub fn update(tray: &TrayIcon, snapshot: &AppSnapshot) {
 
         let _ = tray.set_tooltip(Some(tooltip_for(snapshot)));
     }
-
-    // Silence unused warnings on Linux, where `rows` is not consumed.
-    let _ = rows;
 }
 
 #[cfg(test)]
@@ -122,6 +146,7 @@ mod tests {
         assert_eq!(rows[0].text, "--");
     }
 
+    #[cfg(not(target_os = "linux"))]
     #[test]
     fn tooltip_distinguishes_the_three_states() {
         assert_eq!(tooltip_for(&healthy()), "Session 43% · Weekly 71%");

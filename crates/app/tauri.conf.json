@@ -36,13 +36,31 @@
     "targets": [
       "dmg",
       "msi",
+      "nsis",
       "deb",
+      "rpm",
       "appimage"
     ],
     "icon": [
       "icons/icon.png"
     ],
     "copyright": "",
-    "shortDescription": "Claude subscription usage in your tray."
+    "shortDescription": "Claude subscription usage in your tray.",
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libayatana-appindicator3-1"
+        ]
+      },
+      "rpm": {
+        "depends": [
+          "webkit2gtk4.1",
+          "gtk3",
+          "libayatana-appindicator-gtk3"
+        ]
+      }
+    }
   }
 }

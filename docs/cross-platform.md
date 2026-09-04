@@ -4,9 +4,10 @@ Plan of record for porting ClaudeUsage from a macOS-only Swift menu-bar app to a
 single codebase running on **macOS, Windows, and Linux** (Ubuntu, Debian, Arch,
 Bazzite).
 
-Status: **Phases 1–4 complete** (98 tests). macOS is running and verified live.
-Windows code is written and cross-compile-checked, but **not yet run on real
-hardware**. Linux is untouched. Spikes A and B are done; C still needs hardware.
+Status: **Phases 1–5 complete** (98 tests on macOS, 88 in a real Linux
+container). macOS is running and verified live. Linux compiles and tests fully
+in Docker. Windows is written and cross-compile-checked only. **Neither Windows
+nor Linux has been run on real hardware yet.**
 
 ---
 
@@ -458,12 +459,46 @@ a Start Menu shortcut + AppUserModelID, so they no-op in dev builds and work
 only from the MSI), and that the credential file is found at
 `%USERPROFILE%\.claude\.credentials.json`.
 
-### Phase 5 — Linux
+### Phase 5 — Linux ✅ **CODE DONE, COMPILES AND TESTS IN A CONTAINER**
 
-Ubuntu/Debian (`webkit2gtk-4.1`, `libayatana-appindicator3`), Arch, and
-**Bazzite via AppImage** — layering packages on an immutable OS is exactly the
-friction Bazzite users avoid. Tolerate `StatusNotifierWatcher` registration races
-with retry/backoff ([tray-icon#336](https://github.com/tauri-apps/tray-icon/issues/336)).
+Unlike Windows, Linux can be verified fairly deeply from macOS: `packaging/`
+carries an Ubuntu 22.04 build image (the oldest release shipping
+`webkit2gtk-4.1`), and **the whole app crate compiles there** — `tao`,
+`libappindicator`, `tray-icon` and all. `ring` blocks the equivalent Windows
+check; nothing blocks this one.
+
+**A real bug fixed.** Phase 3's Linux branch set `set_title` but never set an
+icon at all — and `set_title` only displays *if an icon is present*, so the tray
+would have shown nothing. The icon is now set, but only when its colour bucket
+changes (`tray::linux::IconBuckets`), which preserves the whole point of the
+Linux path: every `set_icon` writes a PNG into `$XDG_RUNTIME_DIR`, so redrawing
+per poll would mean ~1,440 writes a day. Bucket changes happen a handful of
+times a day.
+
+**Missing-tray detection.** `detect_tray_host()` asks the session bus whether
+`org.kde.StatusNotifierWatcher` has an owner, via `gdbus` (ships with GLib, so
+no new dependency). When absent it prints install advice keyed to the distro
+family — and deliberately **does not** suggest `apt` on an rpm-ostree system,
+where layering needs a reboot. Registration can race with shell startup, so a
+single negative at launch is treated as advice, never as a hard gate.
+
+**Packaging.** `.deb`, `.rpm` and `.AppImage` targets with their dependency
+lists (`libwebkit2gtk-4.1-0`, `libayatana-appindicator3-1` and the rpm
+equivalents). `packaging/build-linux.sh` drives the containerised build.
+**AppImage is the recommended artifact for Bazzite** — layering a package on an
+immutable OS is exactly the friction those distros exist to avoid.
+
+#### What the container does and does not prove
+
+Verified: the full app crate compiles for Linux, 88 tests pass (26 app + 62
+core), clippy is clean, the distro detection maps Bazzite / Silverblue /
+Kinoite / Debian / Ubuntu / Arch to the right advice, and `detect_tray_host()`
+degrades to `Unknown` rather than panicking with no session bus.
+
+Not verified — needs a real desktop: that the tray icon actually appears and
+that `set_title` renders beside it, that the popover behaves on Wayland (where
+it **cannot** be tray-anchored, so it is a centred window by design), that the
+bundles install and run, and that notifications reach the desktop.
 
 ### Phase 6 — Retire Xcode (gated)
 
