@@ -181,15 +181,20 @@ pub fn render_at(rows: &[Row], total_h: u32) -> Rendered {
     // One row fills the icon; two share it. Without this a single-row display
     // would render at half height and look shrunken next to other menu items.
     let rows_count = rows.len().max(1) as f32;
-    let gap = if rows_count > 1.0 { (total_h as f32 * 0.06).max(1.0) } else { 0.0 };
+    let gap = if rows_count > 1.0 { (total_h as f32 * 0.02).max(1.0) } else { 0.0 };
     let row_h = (total_h as f32 - gap) / rows_count;
-    let scale = PxScale::from(row_h * 0.98);
+    // Two rows can overshoot their box — digits have no descenders, so the
+    // glyphs grow into space the metrics reserve but never use. A single row
+    // already owns the full height, and the same overshoot would make the icon
+    // several times wider than the menu bar wants.
+    let text_ratio = if rows_count > 1.0 { 1.18 } else { 0.82 };
+    let scale = PxScale::from(row_h * text_ratio);
     let scaled = font.as_scaled(scale);
 
     // Icons are square, sized to the row and inset slightly so they sit
     // optically level with the digits rather than overpowering them.
-    let icon_size = (row_h * 0.78).round().max(1.0);
-    let icon_gap = (icon_size * 0.14).round().max(1.0);
+    let icon_size = (row_h * 0.70).round().max(1.0);
+    let icon_gap = (icon_size * 0.10).round().max(1.0);
     let any_icons = rows.iter().any(|r| r.icon.is_some());
     let text_offset = if any_icons { icon_size + icon_gap } else { 0.0 };
 
@@ -211,7 +216,7 @@ pub fn render_at(rows: &[Row], total_h: u32) -> Rendered {
         let row_top = gap / 2.0 + row_h * i as f32;
         // Baseline sits slightly above the row's bottom edge to leave room for
         // descenders; '%' has none but the metric keeps rows optically even.
-        let baseline_y = gap / 2.0 + row_h * (i as f32 + 1.0) - row_h * 0.22;
+        let baseline_y = gap / 2.0 + row_h * (i as f32 + 1.0) - row_h * 0.08;
 
         if let Some(kind) = row.icon {
             let decoded = match kind {
@@ -312,6 +317,28 @@ mod tests {
         let plain = render_at(&[Row::usage(72.0)], 54);
         let with_icon = render_at(&[Row::usage(72.0).with_icon(RowIcon::Session)], 54);
         assert!(with_icon.width > plain.width, "the icon must reserve its own space");
+    }
+
+    #[test]
+    fn the_icon_stays_a_reasonable_shape() {
+        // The menu bar fixes the height, so width is the only cost — an icon
+        // that grows sideways eats the user's menu bar. These bounds are wide
+        // enough for "100%" in both rows but catch a runaway scale factor.
+        let two = render_at(
+            &[
+                Row::usage(90.0).with_icon(RowIcon::Session),
+                Row::usage(63.0).with_icon(RowIcon::Weekly),
+            ],
+            44,
+        );
+        let ratio = two.width as f32 / two.height as f32;
+        assert!(ratio < 2.2, "two-row icon is {ratio:.2}x wide, too much menu bar");
+
+        // One row owns the full height, so it is inherently wider — but not
+        // unboundedly so.
+        let one = render_at(&[Row::usage(90.0).with_icon(RowIcon::Session)], 44);
+        let ratio = one.width as f32 / one.height as f32;
+        assert!(ratio < 3.0, "single-row icon is {ratio:.2}x wide, too much menu bar");
     }
 
     #[test]
