@@ -4,8 +4,19 @@
 // carries full locale data for free, where Rust would need the heavy `icu`
 // crate. This is the JS counterpart of SharedUsage.swift's resetString.
 
-const { invoke } = window.__TAURI__.core;
-const { listen } = window.__TAURI__.event;
+// The UI is buildless, so it reaches Tauri through the window global rather
+// than an npm import. That global only exists when `withGlobalTauri` is set in
+// tauri.conf.json — without it this file throws on its first line and the
+// popover renders as an empty window, which is exactly what it looked like.
+const tauri = window.__TAURI__;
+if (!tauri) {
+  document.body.innerHTML =
+    '<p style="padding:16px;font:13px system-ui">Tauri API unavailable — ' +
+    'set <code>app.withGlobalTauri</code> in tauri.conf.json.</p>';
+  throw new Error("window.__TAURI__ is undefined");
+}
+const { invoke } = tauri.core;
+const { listen } = tauri.event;
 
 // Thresholds must match Theme.swift / UsageLevel::for_percent.
 function usageColor(percent) {

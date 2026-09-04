@@ -28,7 +28,8 @@
       "iconPath": "icons/tray.png",
       "iconAsTemplate": false
     },
-    "macOSPrivateApi": true
+    "macOSPrivateApi": true,
+    "withGlobalTauri": true
   },
   "bundle": {
     "active": true,
