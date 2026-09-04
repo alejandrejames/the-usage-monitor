@@ -2,7 +2,6 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ClaudeUsage",
   "identifier": "com.you.claudeusage",
-  "version": "1.1.0",
   "build": {
     "frontendDist": "../../ui"
   },
@@ -42,7 +41,11 @@
       "appimage"
     ],
     "icon": [
-      "icons/icon.png"
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
     ],
     "copyright": "",
     "shortDescription": "Claude subscription usage in your tray.",

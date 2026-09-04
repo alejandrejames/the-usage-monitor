@@ -5,9 +5,13 @@
 resolver = "2"
 members = ["crates/core", "crates/app"]
 
-# Single source of truth for the app version (see the versioning migration
-# section in docs/cross-platform.md). project.yml still holds the version for
-# the legacy Xcode build until that target is retired.
+# The single source of truth for the app version.
+#
+# crates/app inherits it via `version.workspace = true`, and Tauri falls back to
+# the crate's Cargo.toml version because `version` is omitted from
+# tauri.conf.json — so this line alone drives the binary, the bundle and the
+# installer filenames. Verified: setting it to 1.1.99 produced
+# ClaudeUsage_1.1.99_aarch64.dmg.
 [workspace.package]
 version    = "1.1.0"
 edition    = "2021"

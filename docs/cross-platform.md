@@ -4,10 +4,11 @@ Plan of record for porting ClaudeUsage from a macOS-only Swift menu-bar app to a
 single codebase running on **macOS, Windows, and Linux** (Ubuntu, Debian, Arch,
 Bazzite).
 
-Status: **Phases 1–5 complete** (98 tests on macOS, 88 in a real Linux
-container). macOS is running and verified live. Linux compiles and tests fully
-in Docker. Windows is written and cross-compile-checked only. **Neither Windows
-nor Linux has been run on real hardware yet.**
+Status: **Port complete — all six phases done.** macOS runs and is verified
+live (98 tests). Linux compiles, lints and tests in a container (88 tests).
+Windows is written and cross-compile-checked. **Neither Windows nor Linux has
+been run on real hardware yet, and the macOS tray has not been visually
+confirmed** — those checks are with the user.
 
 ---
 
@@ -291,7 +292,7 @@ Three problems:
   not run on Linux or in Git Bash on Windows.
 - The `xcodegen generate` step becomes dead once the Xcode project is retired.
 
-**Migration** (lands in Phase 6, alongside the Xcode retirement):
+**Migration** (done in Phase 6 — see that phase for what actually worked):
 
 - Move the source of truth to the workspace `Cargo.toml` `[workspace.package]
   version`, with `tauri.conf.json` set to `"version": "../Cargo.toml"` so Tauri
@@ -500,11 +501,42 @@ that `set_title` renders beside it, that the popover behaves on Wayland (where
 it **cannot** be tray-anchored, so it is a centred window by design), that the
 bundles install and run, and that notifications reach the desktop.
 
-### Phase 6 — Retire Xcode (gated)
+### Phase 6 — Retire Xcode ✅ **DONE**
 
-Only after macOS parity is **verified including keychain prompt behaviour**. Keep
-the Swift app buildable until then — it is the reference implementation for
-header parsing and reset-time formatting. Land the versioning migration here.
+> **The gate was waived.** This phase was defined as "only after macOS parity is
+> verified", and that verification has not happened — the tray has never been
+> seen on screen. The user chose to proceed anyway; git history retains the
+> Swift sources, so the decision is reversible.
+
+**Versioning migration.** `Cargo.toml`'s `[workspace.package] version` is now
+the only place the version lives. The mechanism is the opposite of what the plan
+assumed: Tauri does **not** accept a path to a `Cargo.toml` (only a semver
+string or a `package.json` path), but **omitting `version` entirely** makes it
+fall back to the crate's own version — which `crates/app` already inherits via
+`version.workspace = true`.
+
+Verified end to end: setting the workspace version to 1.1.99 produced
+`ClaudeUsage_1.1.99_aarch64.dmg`.
+
+`bump-version.sh` now edits `Cargo.toml`, drops the dead `xcodegen` step, and
+**detects GNU vs BSD sed** — it previously hardcoded the BSD form and so could
+not run on the Linux and Windows machines this project now targets. Both paths
+were tested, including a run in the Linux container.
+
+**Removed:** `ClaudeUsage.xcodeproj`, `project.yml`, `ExportOptions.plist`,
+`Scripts/build.sh`, `ClaudeUsage/`, `Shared/`, `ClaudeUsageWidget/`, and
+`docs/{architecture,data-flow,widget,liquid-glass,build-dmg}.md`.
+
+**Kept, deliberately:**
+
+- **`docs/auth.md`**, rewritten for the new implementation. The history of why
+  the WebView/`sessionKey` approach failed is worth not relearning.
+- **The original app icon.** It was about to be lost with the asset catalog —
+  recovered from git and converted RGB→RGBA (Tauri rejects RGB). `make icons`
+  regenerates the set; a lone 1024×1024 fails with `No matching IconType`.
+
+`CLAUDE.md` and the README were rewritten: both described a Swift/Xcode project
+that no longer exists.
 
 ---
 

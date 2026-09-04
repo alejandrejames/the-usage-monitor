@@ -4,10 +4,8 @@
 #   make check      what CI would run: fmt, clippy, tests
 #   make run        launch the app
 #
-# Two apps live here during the port (see docs/cross-platform.md):
-#   - the Rust/Tauri app in crates/, which is cross-platform
-#   - the original Swift app, still the macOS reference until Phase 6
-# Swift targets are prefixed `swift-` to keep the two unambiguous.
+# One cross-platform Rust/Tauri app. The original Swift/Xcode app it replaced
+# was retired once parity landed; see docs/cross-platform.md for the port.
 
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
@@ -98,6 +96,15 @@ bundle: ## Build the macOS .app and .dmg
 	@echo "  Unsigned, so first launch needs:"
 	@echo "    xattr -rd com.apple.quarantine /Applications/ClaudeUsage.app"
 
+.PHONY: icons
+icons: ## Regenerate the icon set from crates/app/icons/icon.png
+	@# Tauri's bundler needs .icns/.ico plus specific PNG sizes; a lone
+	@# 1024x1024 fails with "No matching IconType". Delete the mobile output
+	@# it also emits, which this project has no targets for.
+	cd crates/app && $(CARGO) tauri icon icons/icon.png
+	rm -rf crates/app/icons/android crates/app/icons/ios \
+		crates/app/icons/Square*.png crates/app/icons/StoreLogo.png
+
 .PHONY: clean
 clean: ## Remove Rust build artifacts
 	$(CARGO) clean
@@ -136,37 +143,16 @@ windows-check: ## Type-check the Windows-only code paths
 	rustup target add x86_64-pc-windows-msvc
 	$(CARGO) check -p claudeusage-core --target x86_64-pc-windows-msvc
 
-# ── Legacy Swift app (retired at Phase 6) ───────────────────────────────────
-
-.PHONY: swift-build
-swift-build: ## Build the original Swift app as a DMG
-	./Scripts/build.sh
-
-.PHONY: swift-project
-swift-project: ## Regenerate ClaudeUsage.xcodeproj from project.yml
-	xcodegen generate
-
-.PHONY: swift-open
-swift-open: swift-project ## Open the Swift app in Xcode
-	open ClaudeUsage.xcodeproj
-
 # ── Release ─────────────────────────────────────────────────────────────────
 
 .PHONY: version
-version: ## Show the version each build source reports
-	@# These are expected to agree and currently do not all update together —
-	@# reconciling them is Phase 6 work. See docs/cross-platform.md.
-	@printf '  %-26s %s\n' "Cargo.toml (workspace)" \
-		"$$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
-	@printf '  %-26s %s\n' "crates/app/tauri.conf.json" \
-		"$$(grep -m1 '"version"' crates/app/tauri.conf.json | cut -d'"' -f4)"
-	@printf '  %-26s %s\n' "project.yml (Swift)" \
-		"$$(grep -m1 'MARKETING_VERSION' project.yml | cut -d'"' -f2)"
+version: ## Show the app version
+	@# One source of truth: crates/app inherits this via version.workspace,
+	@# and Tauri reads the crate version because `version` is omitted from
+	@# tauri.conf.json. Verified end to end — see docs/cross-platform.md.
+	@grep -m1 '^version' Cargo.toml | cut -d'"' -f2
 
 .PHONY: bump
 bump: ## Bump the version and tag (KIND=patch|minor|major|X.Y.Z)
 	@test -n "$(KIND)" || { echo "Usage: make bump KIND=patch"; exit 1; }
-	@echo "⚠ Updates project.yml only. The Tauri bundle version lives in"
-	@echo "  crates/app/tauri.conf.json and must be changed by hand until"
-	@echo "  Phase 6 reconciles them — run 'make version' after."
 	./Scripts/bump-version.sh $(KIND)

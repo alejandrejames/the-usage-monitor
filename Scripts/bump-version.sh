@@ -1,25 +1,41 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # bump-version.sh — bump the app version and tag a release.
 #
-# Updates MARKETING_VERSION (semver) and CURRENT_PROJECT_VERSION (build number)
-# in project.yml, moves the CHANGELOG [Unreleased] section to the new version,
-# commits, and creates an annotated git tag (vX.Y.Z).
+# Updates the workspace version in Cargo.toml, moves the CHANGELOG
+# [Unreleased] section under the new version, commits, and creates an
+# annotated git tag (vX.Y.Z).
+#
+# Cargo.toml is the only place the version lives: crates/app inherits it via
+# `version.workspace = true`, and Tauri reads the crate version because
+# `version` is omitted from tauri.conf.json. One edit reaches the binary, the
+# bundle and every installer filename.
 #
 # Usage:
-#   ./Scripts/bump-version.sh patch      # 1.0.0 -> 1.0.1
-#   ./Scripts/bump-version.sh minor      # 1.0.1 -> 1.1.0
-#   ./Scripts/bump-version.sh major      # 1.1.0 -> 2.0.0
+#   ./Scripts/bump-version.sh patch      # 1.1.0 -> 1.1.1
+#   ./Scripts/bump-version.sh minor      # 1.1.1 -> 1.2.0
+#   ./Scripts/bump-version.sh major      # 1.2.0 -> 2.0.0
 #   ./Scripts/bump-version.sh 1.4.2      # set an explicit version
 #
-# Add --no-tag to skip git commit/tag (only edit files).
+# Add --no-tag to skip the git commit and tag (only edit files).
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PROJECT_YML="project.yml"
+MANIFEST="Cargo.toml"
 CHANGELOG="CHANGELOG.md"
 
-[ -f "$PROJECT_YML" ] || { echo "✗ $PROJECT_YML not found"; exit 1; }
+[ -f "$MANIFEST" ] || { echo "✗ $MANIFEST not found"; exit 1; }
+
+# ── Portable in-place sed ───────────────────────────────────────────────────
+#
+# BSD sed (macOS) requires an argument to -i; GNU sed (Linux, Git Bash) rejects
+# one. The previous version hardcoded the BSD form and so could not run on the
+# Linux and Windows machines this project now targets.
+if sed --version >/dev/null 2>&1; then
+  sed_i() { sed -i "$@"; }          # GNU
+else
+  sed_i() { sed -i '' "$@"; }       # BSD
+fi
 
 # ── Parse args ──────────────────────────────────────────────────────────────
 NO_TAG=0
@@ -33,9 +49,11 @@ done
 [ -n "$KIND" ] || { echo "Usage: $0 <major|minor|patch|X.Y.Z> [--no-tag]"; exit 1; }
 
 # ── Current version ─────────────────────────────────────────────────────────
-CURRENT=$(grep -E '^\s*MARKETING_VERSION:' "$PROJECT_YML" | head -1 | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/')
-BUILD=$(grep -E '^\s*CURRENT_PROJECT_VERSION:' "$PROJECT_YML" | head -1 | sed -E 's/.*"([0-9]+)".*/\1/')
-[ -n "$CURRENT" ] || { echo "✗ Could not read MARKETING_VERSION from $PROJECT_YML"; exit 1; }
+#
+# Read from the [workspace.package] table. Anchored to a line starting with
+# `version` so dependency versions elsewhere in the file cannot match.
+CURRENT=$(grep -E '^version[[:space:]]*=' "$MANIFEST" | head -1 | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/')
+[ -n "$CURRENT" ] || { echo "✗ Could not read the workspace version from $MANIFEST"; exit 1; }
 
 IFS='.' read -r MAJ MIN PAT <<< "$CURRENT"
 
@@ -47,25 +65,24 @@ case "$KIND" in
   [0-9]*.[0-9]*.[0-9]*) NEW="$KIND" ;;
   *) echo "✗ Unknown bump kind: $KIND"; exit 1 ;;
 esac
-NEW_BUILD=$((BUILD + 1))
 
-echo "▶ $CURRENT (build $BUILD)  →  $NEW (build $NEW_BUILD)"
+echo "▶ $CURRENT  →  $NEW"
 
-# ── Edit project.yml ────────────────────────────────────────────────────────
-sed -i '' -E "s/(MARKETING_VERSION:[[:space:]]*\")[0-9.]+(\")/\1${NEW}\2/" "$PROJECT_YML"
-sed -i '' -E "s/(CURRENT_PROJECT_VERSION:[[:space:]]*\")[0-9]+(\")/\1${NEW_BUILD}\2/" "$PROJECT_YML"
+# ── Edit Cargo.toml ─────────────────────────────────────────────────────────
+sed_i -E "s/^(version[[:space:]]*=[[:space:]]*\")[0-9]+\.[0-9]+\.[0-9]+(\")/\1${NEW}\2/" "$MANIFEST"
+
+# Keep Cargo.lock in step so the tree is clean after the bump.
+if command -v cargo >/dev/null 2>&1; then
+  CARGO_BIN=$(rustup which cargo 2>/dev/null || command -v cargo)
+  "$CARGO_BIN" metadata --format-version 1 >/dev/null 2>&1 \
+    && echo "  ✓ Cargo.lock refreshed"
+fi
 
 # ── Update CHANGELOG: rename [Unreleased] to the new version + date ──────────
 if [ -f "$CHANGELOG" ]; then
   TODAY=$(date +%Y-%m-%d)
-  # Insert a fresh empty [Unreleased] above the dated section.
-  sed -i '' -E "s/^## \[Unreleased\]\$/## [Unreleased]\n\n## [${NEW}] - ${TODAY}/" "$CHANGELOG"
-  echo "  ✓ CHANGELOG.md updated (move Unreleased notes under [$NEW])"
-fi
-
-# ── Regenerate the Xcode project if XcodeGen is available ────────────────────
-if command -v xcodegen >/dev/null 2>&1; then
-  xcodegen generate >/dev/null && echo "  ✓ Regenerated ClaudeUsage.xcodeproj"
+  sed_i -E "s/^## \[Unreleased\]\$/## [Unreleased]\n\n## [${NEW}] - ${TODAY}/" "$CHANGELOG"
+  echo "  ✓ CHANGELOG.md updated (Unreleased notes moved under [$NEW])"
 fi
 
 if [ "$NO_TAG" -eq 1 ]; then
@@ -74,7 +91,7 @@ if [ "$NO_TAG" -eq 1 ]; then
 fi
 
 # ── Commit + tag ────────────────────────────────────────────────────────────
-git add "$PROJECT_YML" "$CHANGELOG" 2>/dev/null || true
+git add "$MANIFEST" "$CHANGELOG" Cargo.lock 2>/dev/null || true
 git commit -m "Release v${NEW}" >/dev/null
 git tag -a "v${NEW}" -m "v${NEW}"
 echo "✅ Committed and tagged v${NEW}."

@@ -3,60 +3,90 @@
 > **History:** The original design used a WebView login that captured the
 > `claude.ai` `sessionKey` cookie. That never worked: `api.claude.ai` does not
 > resolve, and `claude.ai/api/oauth/usage` is behind a Cloudflare managed bot
-> challenge that a plain `URLSession` (with only `sessionKey`) cannot pass —
-> it returns a 403 "Just a moment…" page. The app now reuses Claude Code's
-> OAuth token instead. See `real-usage-api-contract` in project memory.
+> challenge that a plain HTTP client (with only `sessionKey`) cannot pass — it
+> returns a 403 "Just a moment…" page. The app reuses Claude Code's OAuth token
+> instead.
 
-## How it works now
+## How it works
 
-There is **no in-app login**. The macOS app reuses the OAuth credential that
-the `claude` CLI (Claude Code) already stores on the machine.
+There is **no in-app login**. The app reuses the OAuth credential the `claude`
+CLI (Claude Code) already stores on the machine, and never writes one of its
+own. The user manages auth entirely through the CLI; there is no `logout()`.
 
-### macOS
+Implementation: [`crates/core/src/credentials.rs`](../crates/core/src/credentials.rs).
 
-`AuthManager` reads a generic-password item from the **login keychain**:
+## Where the credential lives
 
-| Attribute | Value |
+| Platform | Location |
 |---|---|
-| `kSecClass` | `kSecClassGenericPassword` |
-| `kSecAttrService` | `Claude Code-credentials` |
+| macOS | login keychain, generic-password, service `Claude Code-credentials` |
+| Linux | `$CLAUDE_CONFIG_DIR/.credentials.json` else `~/.claude/.credentials.json` |
+| Windows | `%CLAUDE_CONFIG_DIR%\.credentials.json` else `%USERPROFILE%\.claude\.credentials.json` |
 
-The item's value is JSON. The relevant part:
+The value is JSON. The app reads exactly one key out of it:
 
 ```json
 {
   "claudeAiOauth": {
-    "accessToken":  "sk-ant-oat01-…",   // Bearer token for the usage API
+    "accessToken":  "sk-ant-oat01-…",   // Bearer token
     "refreshToken": "sk-ant-ort01-…",
-    "expiresAt":    1780135050513,        // epoch milliseconds
+    "expiresAt":    1788512886774,      // epoch MILLISECONDS
     "subscriptionType": "pro"
   }
 }
 ```
 
-- `AuthManager.accessToken` returns `claudeAiOauth.accessToken`, or `nil` if the
-  item is missing or `expiresAt` has passed.
-- `AuthManager.isAuthenticated` is true when a non-expired token is present.
-- `AuthManager.refreshAvailability()` re-reads the keychain (call after a 401 or
-  when the app becomes active). Claude Code refreshes the token out-of-band; the
-  app simply re-reads it.
-- There is **no `logout()`**. The user manages auth with the `claude` CLI.
+**The blob holds more than this app's token.** On macOS it also carries OAuth
+tokens — including client secrets and refresh tokens — for every MCP server the
+user has authorised. Nothing in the codebase logs the blob, a token, or any
+substring of one; the `probe` binary prints a character count and nothing more.
 
-**The macOS app must not be sandboxed.** A sandboxed app cannot read a
-login-keychain item it did not create. `ClaudeUsage.entitlements` therefore
-omits `com.apple.security.app-sandbox`. This rules out App Store distribution,
-which was never a goal.
+Newer Claude Code versions add fields (`rateLimitTier`,
+`refreshTokenExpiresAt`) that the decoder ignores rather than rejects.
 
-### iOS
+## The macOS source chain
 
-iOS cannot read the Mac's keychain and has no token of its own. The iOS
-`AuthManager` branch reports `isAuthenticated` based on whether the App Group
-has ever received synced data, and `UsageStore.loadFromAppGroup()` reads the
-percentages the macOS app wrote. iOS never calls the network.
+macOS tries three sources in order, and logs which one won:
 
-## Token expiry
+1. `~/.claude/.credentials.json` — usually absent, but Claude Code writes it
+   when a keychain write is rejected (a locked keychain over SSH, say).
+2. `/usr/bin/security find-generic-password -s "Claude Code-credentials" -w`
+3. The native Security framework (`ItemSearchOptions`, service-only query).
 
-If a poll returns HTTP 401, the token is expired/revoked. `UsageStore.markStale()`
-fades the menu-bar icon and `AuthManager.refreshAvailability()` re-checks the
-keychain. Running any `claude` command refreshes the stored token; the app picks
-up the new value on its next poll or re-check.
+**The order is measured, not assumed.** The keychain item's `partition_id` list
+contains only `apple-tool:`, which `/usr/bin/security` satisfies and a
+third-party binary does not. Measured against the live item:
+
+| Run | Native API | `security` CLI |
+|---|---|---|
+| First ever | **9.90 s** — ACL prompt shown | **31.8 ms** — no prompt |
+| After a rebuild | **11.35 s** — prompt **again** | **34.2 ms** — no prompt |
+
+The ~10 s timings are the ACL dialog waiting on a human. Clicking "Always
+Allow" pins the grant to the binary's **cdhash**, so any code change revokes it
+— and Claude Code rewrites the item on every token refresh, resetting the ACL
+outright. The native path can therefore never be primary for an unsigned build.
+Only a stable *designated requirement* (a real signing identity) survives
+rebuilds.
+
+See [cross-platform.md](cross-platform.md) for the full Spike A write-up.
+
+## Caching and expiry
+
+Every uncached read on macOS risks the ACL prompt, so the resolved credential
+is held in memory between polls and only re-read when it is missing or expired.
+A **10-second refetch floor** stops a burst of 401s from becoming a burst of
+prompts.
+
+A credential with no `expiresAt` is treated as non-expiring. On HTTP 401 the
+cache is invalidated so the next poll re-reads — Claude Code may have rotated
+the token out of band. Running any `claude` command refreshes the stored token;
+the app picks it up on the next poll.
+
+## Verifying
+
+```bash
+make probe
+```
+
+Prints which source resolved, the plan, and the expiry — never token material.

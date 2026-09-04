@@ -11,6 +11,18 @@ to bump both and tag a release.
 
 ## [Unreleased]
 
+### Changed
+- **The version now lives only in `Cargo.toml`.** `crates/app` inherits it and
+  Tauri reads the crate version, so one edit reaches the binary, the bundle and
+  every installer filename. `bump-version.sh` updates it and works with both GNU
+  and BSD sed (it previously hardcoded the BSD form and could not run on Linux).
+
+### Removed
+- The Swift/Xcode app: `ClaudeUsage.xcodeproj`, `project.yml`,
+  `ExportOptions.plist`, `Scripts/build.sh`, `ClaudeUsage/`, `Shared/`,
+  `ClaudeUsageWidget/`, and the Swift-specific docs. The Rust/Tauri app replaces
+  it on all three platforms; the sources remain in git history.
+
 ### Added
 - `docs/cross-platform.md` — plan of record for porting the app to Tauri v2
   (macOS, Windows, Linux).

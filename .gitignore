@@ -31,3 +31,4 @@ CLAUDE.md
 
 # Rust (cross-platform port — see docs/cross-platform.md)
 /target/
+/target-linux/   # container build output (see packaging/)
