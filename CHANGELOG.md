@@ -19,6 +19,10 @@ to bump both and tag a release.
   edge-triggered alerts, with 43 unit tests. No UI and no OS calls, so it
   builds on all three target platforms. The macOS Swift app is unaffected and
   remains the reference implementation.
+- Credential sources in `claudeusage-core`: an ordered chain on macOS
+  (credentials file, `/usr/bin/security`, native keychain) and the plaintext
+  `.credentials.json` on Linux and Windows, honouring `CLAUDE_CONFIG_DIR`.
+  Includes a `probe` binary for verifying the chain on any platform.
 
 ## [1.1.0] - 2026-06-11
 

@@ -4,9 +4,9 @@ Plan of record for porting ClaudeUsage from a macOS-only Swift menu-bar app to a
 single codebase running on **macOS, Windows, and Linux** (Ubuntu, Debian, Arch,
 Bazzite).
 
-Status: **Phase 1 complete.** `crates/core` is built and tested (43 tests);
-`crates/app` and `ui/` do not exist yet. The macOS credential question is
-settled empirically — see the Spike A result below.
+Status: **Phases 1–2 complete.** `crates/core` is built and tested (62 tests)
+and the credential chain is verified on macOS for both the keychain and file
+paths; `crates/app` and `ui/` do not exist yet.
 
 ---
 
@@ -309,10 +309,31 @@ Two deliberate departures from the Swift original:
 The Xcode targets glob only `Shared/` and `ClaudeUsage/`, so the Swift build is
 untouched and remains the reference implementation until Phase 6.
 
-### Phase 2 — Credentials
+### Phase 2 — Credentials ✅ **DONE**
 
-`CredentialSource` trait + 3 backends + cache, informed by Spike A. Ship a CLI
-probe (`cargo run -p core --bin probe`) that prints usage on any OS.
+`CredentialSource` trait + backends + cache, plus the probe binary:
+
+```
+cargo run -p claudeusage-core --bin probe
+```
+
+Two things found by inspecting the live keychain item that the Swift version
+does not account for:
+
+- **The blob carries more than this app's token.** It also stores OAuth tokens
+  for every MCP server the user has authorised. Nothing in the module logs the
+  blob, a token, or any substring of one — the probe prints a character count.
+- **Newer fields exist** (`rateLimitTier`, `refreshTokenExpiresAt`) that the
+  decoder must ignore rather than reject.
+
+The cached provider adds a **10-second refetch floor** on top of the ported
+`AuthManager` cache, so a burst of 401s cannot become a burst of keychain
+prompts.
+
+**The probe stops at the first successful source.** Probing further reaches the
+native keychain API, which blocks on the ACL dialog and hangs indefinitely in a
+non-interactive shell — pass `--all` to force the full sweep. This is a probe
+concern only; in the GUI a user is present to click.
 
 ### Phase 3 — macOS parity
 
@@ -387,8 +408,9 @@ Table stakes for a tray app, absent from the current Swift feature set:
   70/90, half-away-from-zero rounding matching Swift's `.rounded()`,
   case-insensitive header lookup, NaN/inf rejection, edge-triggered alerts
   firing once per crossing, and the Statuspage name-fallback.
-- **Phase 2** — `cargo run -p core --bin probe` prints a live percentage on each
-  OS and logs which credential source won.
+- ~~**Phase 2**~~ — **done.** `cargo run -p claudeusage-core --bin probe`
+  resolves via the security CLI on macOS, and via the file source (the Linux and
+  Windows path) when `CLAUDE_CONFIG_DIR` points at one. Both verified.
 - **Phases 3–5** — on each OS: tray renders and updates; popover opens on click
   and auto-hides on focus loss; 80/95 % notifications fire once; the app survives
   a token refresh without prompting; the disconnected state renders when offline.
