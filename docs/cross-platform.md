@@ -4,9 +4,9 @@ Plan of record for porting ClaudeUsage from a macOS-only Swift menu-bar app to a
 single codebase running on **macOS, Windows, and Linux** (Ubuntu, Debian, Arch,
 Bazzite).
 
-Status: **Phases 1–3 complete.** The macOS app builds, runs and polls live
-(94 tests). Windows and Linux are untouched. Spikes A and B are done; C still
-needs hardware.
+Status: **Phases 1–4 complete** (98 tests). macOS is running and verified live.
+Windows code is written and cross-compile-checked, but **not yet run on real
+hardware**. Linux is untouched. Spikes A and B are done; C still needs hardware.
 
 ---
 
@@ -408,12 +408,55 @@ rustup on `PATH` here, so `rust-toolchain.toml` pins the project to rustup's
 stable. `.nvmrc` pins Node 22. There is no bundler or `package.json` — the UI is
 plain HTML/CSS/JS, so Node is needed only by the Tauri CLI itself.
 
-### Phase 4 — Windows (**before Linux**)
+### Phase 4 — Windows ⚠️ **CODE DONE, UNVERIFIED ON HARDWARE**
 
-Windows is where the tray design constraint bites; discovering it after Linux
-would mean rewriting the shared renderer. Add a **debounce guard** — clicking the
-tray while the window is visible fires focus-loss *then* the tray click, causing
-a hide-then-show flicker.
+Two Windows-specific problems fixed:
+
+**1. DPI-correct icon sizing.** Phase 3 rendered a fixed 54 px buffer on every
+platform. macOS scales that down cleanly, but Microsoft's guidance is explicit
+that on Windows an icon which is too large "is subject to being downscaled (also
+poorly) by the OS". `tray::sizing` now queries
+`GetSystemMetricsForDpi(SM_CYSMICON, GetDpiForSystem())` per render, so moving
+between monitors with different scaling re-renders at the right size. It falls
+back to 16 px if the metric read fails.
+
+Rendered with the shipping font at each Windows tray size:
+
+| DPI | Icon | Per row | Verdict |
+|---|---|---|---|
+| 100 % | 16 px | ~8 px | cramped; **colour still reads** even when digits blur |
+| 125 % | 20 px | ~9 px | tight but usable |
+| 150 % | 24 px | ~11 px | legible |
+| 200 % | 32 px | ~15 px | clean |
+
+This is the tradeoff already accepted, and the colour channel carrying the
+signal at 16 px makes it milder than feared.
+
+**2. Tray-click debounce.** Clicking the tray while the popover is open delivers
+focus-loss *first* and the click second, so the click would reopen the window
+the focus-loss just closed and the popover would appear never to close. A 250 ms
+guard suppresses that. Applied on **all** platforms, not just Windows — the
+event ordering is not guaranteed anywhere.
+
+#### What "cross-compile-checked" means, and does not
+
+`cargo check --target x86_64-pc-windows-msvc` passes for `claudeusage-core` and
+for the `sizing` module, and both were confirmed to be *genuinely* compiled by
+deliberately breaking the Windows-only branches and watching the check fail
+while the host build stayed green. That verifies the `cfg` branches, the
+`windows-sys` feature flags, and the Win32 symbol names.
+
+**It does not verify anything visual or behavioural.** The full app crate cannot
+be cross-checked from macOS at all: `ring`, pulled in transitively by
+`ureq`→`rustls`, needs a C compiler targeting Windows. Switching rustls to a
+pure-Rust provider would enable it, but changing the production TLS stack to
+suit the dev machine is the wrong trade.
+
+**Still to confirm on real hardware:** that the tray icon appears and is legible
+at each DPI, that the debounce feels right, that notifications fire (they need
+a Start Menu shortcut + AppUserModelID, so they no-op in dev builds and work
+only from the MSI), and that the credential file is found at
+`%USERPROFILE%\.claude\.credentials.json`.
 
 ### Phase 5 — Linux
 

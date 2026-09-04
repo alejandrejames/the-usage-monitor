@@ -31,6 +31,16 @@ ureq = { version = "3", features = ["json"] }
 # Tray icon rendering. ab_glyph rasterises the digits; no shaping needed.
 ab_glyph = "0.2"
 
+# Windows only: querying the tray icon size for the current DPI. Unlike macOS,
+# which scales an oversized icon cleanly, Windows downscales poorly — so the
+# icon must be rendered at exactly the size the shell asks for.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+] }
+
 [features]
 # Tauri's default custom-protocol feature, used for release builds.
 custom-protocol = ["tauri/custom-protocol"]

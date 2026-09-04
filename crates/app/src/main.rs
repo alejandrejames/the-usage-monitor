@@ -10,7 +10,9 @@ mod tray;
 
 use claudeusage_core::{status, Alert};
 use state::{AppSnapshot, AppState, PollOutcome};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, WindowEvent};
@@ -172,6 +174,7 @@ fn main() {
             // Auto-hide on focus loss, matching the menu-bar panel behaviour.
             // Hiding rather than closing keeps the app resident in the tray.
             if let WindowEvent::Focused(false) = event {
+                note_hidden_by_focus_loss();
                 let _ = window.hide();
             }
         })
@@ -185,11 +188,51 @@ fn main() {
         });
 }
 
+// MARK: - Popover visibility
+
+/// When the popover was last hidden by losing focus, as millis since start.
+///
+/// Clicking the tray icon while the popover is open delivers focus-loss
+/// *first* and the tray click second. Without this the click would reopen the
+/// window that the focus-loss just closed, so the popover appears never to
+/// close. Windows is where this is most pronounced, but the ordering is not
+/// guaranteed anywhere, so the guard is unconditional.
+static LAST_FOCUS_HIDE_MS: AtomicU64 = AtomicU64::new(0);
+
+/// How long after a focus-loss hide a tray click is treated as part of the
+/// same gesture. Long enough to cover the event gap, short enough that a
+/// deliberate second click still opens the popover.
+const CLICK_DEBOUNCE_MS: u64 = 250;
+
+/// Process-relative clock. `Instant` cannot be stored in an atomic, and a
+/// monotonic counter avoids wall-clock jumps entirely.
+fn uptime_millis() -> u64 {
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
+fn note_hidden_by_focus_loss() {
+    LAST_FOCUS_HIDE_MS.store(uptime_millis(), Ordering::SeqCst);
+}
+
+/// True when a tray click arrived so soon after a focus-loss hide that it is
+/// the same user gesture.
+fn click_closed_the_popover() -> bool {
+    let last = LAST_FOCUS_HIDE_MS.load(Ordering::SeqCst);
+    last != 0 && uptime_millis().saturating_sub(last) < CLICK_DEBOUNCE_MS
+}
+
 /// Shows or hides the popover.
 fn toggle_popover(app: &tauri::AppHandle) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
+
+    // The focus-loss handler already hid it; this click ends the gesture.
+    if click_closed_the_popover() {
+        return;
+    }
+
     if window.is_visible().unwrap_or(false) {
         let _ = window.hide();
     } else {

@@ -5,11 +5,10 @@
 //! applies everywhere, and on Windows there is no tray text at all, so every
 //! platform gets its numbers this way.
 //!
-//! **Sizing is by aspect ratio, not absolute pixels.** Spike B established that
-//! the macOS backend normalises the icon to a fixed height in *points* and
-//! derives width from the source aspect ratio, so a 2x buffer is scaled down
-//! rather than clipped. Supplying a larger buffer therefore costs nothing and
-//! buys Retina sharpness. See docs/cross-platform.md.
+//! **The caller decides the height**; see the `sizing` module for why it
+//! differs per platform. macOS scales an oversized buffer down cleanly, so it
+//! renders at 3x for Retina sharpness; Windows downscales poorly and must be
+//! given exactly the size the shell reports. See docs/cross-platform.md.
 
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
 use claudeusage_core::UsageLevel;
@@ -23,10 +22,6 @@ use claudeusage_core::UsageLevel;
 /// containers. `ab_glyph` cannot parse `.ttc` collections, so this must stay a
 /// plain `.ttf`.
 const FONT: &[u8] = include_bytes!("../../assets/DejaVuSans-Bold.ttf");
-
-/// Rendered at 3x the macOS 18 pt tray height, giving a crisp source for both
-/// 1x and 2x displays after the backend scales it down.
-const RENDER_HEIGHT: u32 = 54;
 
 /// A single row of the tray icon.
 pub struct Row {
@@ -60,16 +55,10 @@ pub struct Rendered {
     pub height: u32,
 }
 
-/// Renders the two-row icon.
-pub fn stacked(rows: &[Row]) -> Rendered {
-    render_at(rows, RENDER_HEIGHT)
-}
-
 /// Renders into a buffer of exactly `total_h` pixels tall.
 ///
-/// Windows needs this directly: its tray icon size is fixed by DPI
-/// (`GetSystemMetrics(SM_CXSMICON)` gives 16/20/24/32) rather than scaled from
-/// an aspect ratio, so the caller passes the queried size.
+/// Width follows from the widest row, so the icon keeps the text's aspect
+/// ratio rather than being forced square.
 pub fn render_at(rows: &[Row], total_h: u32) -> Rendered {
     let font = FontRef::try_from_slice(FONT).expect("bundled font must parse");
 
@@ -131,6 +120,12 @@ pub fn render_at(rows: &[Row], total_h: u32) -> Rendered {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tray::sizing::tray_icon_height;
+
+    /// Renders at the platform's current tray height.
+    fn render_at_default(rows: &[Row]) -> Rendered {
+        render_at(rows, tray_icon_height())
+    }
 
     #[test]
     fn the_bundled_font_parses() {
@@ -154,8 +149,8 @@ mod tests {
 
     #[test]
     fn renders_a_correctly_sized_buffer() {
-        let r = stacked(&[Row::usage(43.0), Row::usage(71.0)]);
-        assert_eq!(r.height, RENDER_HEIGHT);
+        let r = render_at_default(&[Row::usage(43.0), Row::usage(71.0)]);
+        assert_eq!(r.height, tray_icon_height());
         assert_eq!(r.rgba.len(), (r.width * r.height * 4) as usize);
         assert!(r.width > 0);
     }
@@ -164,8 +159,8 @@ mod tests {
     fn width_is_stable_across_equal_digit_counts() {
         // 43%/71% and 88%/12% are both two digits, so the icon must not
         // resize as usage changes.
-        let a = stacked(&[Row::usage(43.0), Row::usage(71.0)]);
-        let b = stacked(&[Row::usage(88.0), Row::usage(12.0)]);
+        let a = render_at_default(&[Row::usage(43.0), Row::usage(71.0)]);
+        let b = render_at_default(&[Row::usage(88.0), Row::usage(12.0)]);
         assert_eq!(a.width, b.width);
     }
 
@@ -173,8 +168,8 @@ mod tests {
     fn a_hundred_percent_widens_the_icon() {
         // Three digits genuinely need more room; the icon must grow rather
         // than clip.
-        let two = stacked(&[Row::usage(43.0), Row::usage(71.0)]);
-        let three = stacked(&[Row::usage(100.0), Row::usage(100.0)]);
+        let two = render_at_default(&[Row::usage(43.0), Row::usage(71.0)]);
+        let three = render_at_default(&[Row::usage(100.0), Row::usage(100.0)]);
         assert!(three.width > two.width);
     }
 
@@ -189,7 +184,7 @@ mod tests {
     fn something_is_actually_drawn() {
         // Guards against a silent all-transparent render, which would show as
         // a blank tray rather than an error.
-        let r = stacked(&[Row::usage(43.0), Row::usage(71.0)]);
+        let r = render_at_default(&[Row::usage(43.0), Row::usage(71.0)]);
         assert!(r.rgba.chunks(4).any(|px| px[3] > 0), "no opaque pixels rendered");
     }
 
@@ -207,7 +202,7 @@ mod tests {
 
     #[test]
     fn disconnected_rows_render() {
-        let r = stacked(&[Row::disconnected(), Row::disconnected()]);
+        let r = render_at_default(&[Row::disconnected(), Row::disconnected()]);
         assert!(r.rgba.chunks(4).any(|px| px[3] > 0));
     }
 }

@@ -11,6 +11,7 @@
 //!   writes a day.
 
 pub mod render;
+pub mod sizing;
 
 use crate::state::AppSnapshot;
 use render::Row;
@@ -64,7 +65,11 @@ pub fn update(tray: &TrayIcon, snapshot: &AppSnapshot) {
 
     #[cfg(not(target_os = "linux"))]
     {
-        let rendered = render::stacked(&rows);
+        // Windows reports the size it wants for the current DPI, and downscales
+        // an oversized icon poorly; macOS scales cleanly from a fixed 3x buffer.
+        // `sizing` resolves both. Queried per render, so moving between
+        // monitors with different scaling re-renders at the right size.
+        let rendered = render::render_at(&rows, sizing::tray_icon_height());
         let image = Image::new_owned(rendered.rgba, rendered.width, rendered.height);
         let _ = tray.set_icon(Some(image));
 

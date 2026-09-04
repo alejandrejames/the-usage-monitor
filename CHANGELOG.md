@@ -29,6 +29,11 @@ to bump both and tag a release.
   notifications. The popover is plain HTML/CSS/JS; reset times are formatted
   with `Intl.DateTimeFormat`. A `pollcheck` binary verifies a live poll outside
   the GUI. macOS only so far.
+- Windows support in `crates/app`: the tray icon is rendered at the DPI-queried
+  size (`GetSystemMetricsForDpi`), since Windows downscales an oversized icon
+  poorly, and a 250 ms debounce stops a tray click from reopening the popover
+  that the preceding focus-loss just closed. Written and cross-compile-checked
+  but not yet run on Windows hardware.
 
 ## [1.1.0] - 2026-06-11
 
