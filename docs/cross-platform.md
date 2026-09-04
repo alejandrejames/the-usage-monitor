@@ -4,8 +4,9 @@ Plan of record for porting ClaudeUsage from a macOS-only Swift menu-bar app to a
 single codebase running on **macOS, Windows, and Linux** (Ubuntu, Debian, Arch,
 Bazzite).
 
-Status: **planned; Spike A complete.** Nothing in `crates/` or `ui/` exists yet.
-The macOS credential question is settled empirically — see Spike A result below.
+Status: **Phase 1 complete.** `crates/core` is built and tested (43 tests);
+`crates/app` and `ui/` do not exist yet. The macOS credential question is
+settled empirically — see the Spike A result below.
 
 ---
 
@@ -284,12 +285,29 @@ plan are spiked before any production code is written.
 | **B. Tray render** | Two-line RGBA legibility, macOS Retina + Windows DPI | Bare `tray-icon` (not full Tauri). Screenshot macOS Retina and Windows @100 %/150 %. Confirm whether Tauri's `Image` treats pixel dimensions as points and clips |
 | **C. Linux** | Tray + popover on Bazzite/GNOME Wayland | Tray appears with the AppIndicator extension; confirm the popover cannot be tray-anchored |
 
-### Phase 1 — Core crate
+### Phase 1 — Core crate ✅ **DONE**
 
-Port `UsageSnapshot` header parsing, `StatusStore` (component ids
+Ported `UsageSnapshot` header parsing, `StatusStore` (component ids
 `rwppv331jlwc` / `yyzkbfz2thpt` with name fallback), threshold colours
 (`#1D9E75` / `#BA7517` / `#E24B4A` at < 70 / < 90 / ≥ 90), and edge-triggered
-alerts. **Unit-tested, no UI.** ~500 lines.
+alerts. **43 tests, no UI**, `clippy -D warnings` clean.
+
+Landed as `claudeusage-core` with modules `usage` / `status` / `alerts` /
+`model`, plus `backoff_secs()` in the crate root replacing `NWPathMonitor`.
+
+Two deliberate departures from the Swift original:
+
+- **Reset times are epoch millis, not formatted strings.** Formatting moved to
+  the WebView (`Intl.DateTimeFormat`) as planned, so `SharedUsage.swift`'s
+  `resetString` has no Rust counterpart.
+- **`overall_health()` derives precedence from a severity ordering** rather than
+  the hardcoded if-chain in `StatusStore.swift`, so adding a `ServiceHealth`
+  case cannot silently break the ranking. `Unknown` deliberately sorts *above*
+  `Operational` but *below* every real problem — an unmatched component stays
+  visible without masking a live outage.
+
+The Xcode targets glob only `Shared/` and `ClaudeUsage/`, so the Swift build is
+untouched and remains the reference implementation until Phase 6.
 
 ### Phase 2 — Credentials
 
@@ -364,9 +382,11 @@ Table stakes for a tray app, absent from the current Swift feature set:
 
 - ~~**Phase 0A**~~ — **done.** CLI path produced zero prompts across 5 runs
   including a post-rebuild run; native path prompted on every new cdhash.
-- **Phase 1** — `cargo test -p core`: header parsing (200 *and* 429), threshold
-  boundaries at exactly 70/90, edge-triggered alerts firing once per crossing,
-  Statuspage name-fallback when an id is missing.
+- ~~**Phase 1**~~ — **done.** `cargo test -p claudeusage-core` → 43 passed,
+  covering header parsing (200 *and* 429), threshold boundaries at exactly
+  70/90, half-away-from-zero rounding matching Swift's `.rounded()`,
+  case-insensitive header lookup, NaN/inf rejection, edge-triggered alerts
+  firing once per crossing, and the Statuspage name-fallback.
 - **Phase 2** — `cargo run -p core --bin probe` prints a live percentage on each
   OS and logs which credential source won.
 - **Phases 3–5** — on each OS: tray renders and updates; popover opens on click

@@ -13,7 +13,12 @@ to bump both and tag a release.
 
 ### Added
 - `docs/cross-platform.md` — plan of record for porting the app to Tauri v2
-  (macOS, Windows, Linux). Planning only; no code changes yet.
+  (macOS, Windows, Linux).
+- `crates/core` (`claudeusage-core`) — platform-agnostic port of the usage
+  header parsing, Statuspage status parsing, threshold colours and
+  edge-triggered alerts, with 43 unit tests. No UI and no OS calls, so it
+  builds on all three target platforms. The macOS Swift app is unaffected and
+  remains the reference implementation.
 
 ## [1.1.0] - 2026-06-11
 
