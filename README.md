@@ -76,14 +76,31 @@ ClaudeUsage/
 
 ## Build & run
 
+`make` lists every task. The common ones:
+
+```bash
+make run        # run the cross-platform app
+make check      # fmt + clippy + tests
+make bundle     # macOS .app and .dmg
+make poll       # one live usage poll, no GUI
+```
+
+> **Two apps live here during the port.** The cross-platform Rust/Tauri app in
+> `crates/` is the direction of travel; the original Swift app is still the
+> macOS reference until the Xcode project is retired. Swift-specific tasks are
+> prefixed `swift-` (`make swift-build`, `make swift-open`).
+> See [docs/cross-platform.md](docs/cross-platform.md).
+
+### The Swift app
+
 The `.xcodeproj` is generated from `project.yml` (not committed).
 
 ```bash
 # one time
 brew install xcodegen
 # then
-xcodegen generate
-open ClaudeUsage.xcodeproj      # or: ./Scripts/build.sh for a DMG
+make swift-open       # regenerates the project and opens Xcode
+make swift-build      # or build a DMG
 ```
 
 Requirements: Xcode 26, macOS 26. Set your Personal Team ID in `project.yml`
