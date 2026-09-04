@@ -41,7 +41,7 @@ fn refresh_now(app: tauri::AppHandle, state: tauri::State<'_, Arc<AppState>>) {
 /// Re-checks for a credential, for the "Claude Code not detected" prompt.
 #[tauri::command]
 fn recheck_credentials(app: tauri::AppHandle, state: tauri::State<'_, Arc<AppState>>) {
-    state.inner().credentials.lock().expect("credential lock").invalidate();
+    state.inner().credentials.lock().expect("credential lock").force_refresh();
     let state = Arc::clone(state.inner());
     std::thread::spawn(move || {
         run_poll(&app, &state);

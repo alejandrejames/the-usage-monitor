@@ -443,6 +443,20 @@ impl CachedCredentials {
         self.cached = None;
     }
 
+    /// Drops the cached token *and* clears the refetch floor, so the next
+    /// [`token`] genuinely re-reads the sources.
+    ///
+    /// This is for an explicit user action — the popover's "Re-check" button.
+    /// `invalidate()` alone is not enough there: it empties the cache, and the
+    /// floor then serves that empty cache as `NotFound` without ever consulting
+    /// a source, so re-checking within 10s of a failed poll could never
+    /// succeed. The floor exists to stop a 401 *storm*, not to override
+    /// someone deliberately asking.
+    pub fn force_refresh(&mut self) {
+        self.cached = None;
+        self.last_attempt_ms = None;
+    }
+
     /// True when a usable, unexpired credential is currently cached.
     pub fn is_authenticated(&self) -> bool {
         self.is_authenticated_at(now_millis())
@@ -699,6 +713,29 @@ mod tests {
         // One initial read plus at most one more inside the floor window.
         let calls = counter.load(Ordering::SeqCst);
         assert!(calls <= 2, "expected the floor to collapse the burst, got {calls} reads");
+    }
+
+    #[test]
+    fn force_refresh_bypasses_the_floor() {
+        // The bug this guards: invalidate() empties the cache, and the floor
+        // then returns that empty cache as NotFound without consulting any
+        // source — so the popover's Re-check button could never recover.
+        let stub = Stub::ok(SourceKind::File, VALID);
+        let counter = stub.counter();
+        let mut cache = CachedCredentials::new(vec![Box::new(stub)]);
+
+        let now = 1_000_000_000_000;
+        assert!(cache.token_at(now).is_ok());
+
+        // Inside the floor, invalidate() alone cannot recover.
+        cache.invalidate();
+        assert!(cache.token_at(now + 100).is_err());
+        assert_eq!(counter.load(Ordering::SeqCst), 1, "no re-read inside the floor");
+
+        // force_refresh() does, even immediately.
+        cache.force_refresh();
+        assert!(cache.token_at(now + 200).is_ok());
+        assert_eq!(counter.load(Ordering::SeqCst), 2, "force_refresh must re-read");
     }
 
     #[test]

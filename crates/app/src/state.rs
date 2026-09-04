@@ -61,6 +61,18 @@ impl Default for AppState {
     }
 }
 
+/// Prints the winning credential source the first time it is seen, and again
+/// whenever it changes. Never logs the credential itself.
+fn log_source_once(source: claudeusage_core::SourceKind) {
+    use std::sync::Mutex;
+    static LAST: Mutex<Option<claudeusage_core::SourceKind>> = Mutex::new(None);
+    let mut last = LAST.lock().expect("source log lock");
+    if *last != Some(source) {
+        eprintln!("credential resolved via: {}", source.label());
+        *last = Some(source);
+    }
+}
+
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -86,8 +98,19 @@ pub fn poll_once(state: &AppState) -> PollOutcome {
     let token = {
         let mut creds = state.credentials.lock().expect("credential lock");
         match creds.token() {
-            Ok(resolved) => resolved.credentials.access_token.clone(),
-            Err(_) => return PollOutcome::Unauthenticated,
+            Ok(resolved) => {
+                // Log which source won, once per change. Diagnosing "Claude
+                // Code not detected" from a GUI is otherwise guesswork — the
+                // credential chain is the most environment-sensitive part of
+                // the app, and a launchd-started process has a very different
+                // environment from a shell.
+                log_source_once(resolved.source);
+                resolved.credentials.access_token.clone()
+            }
+            Err(e) => {
+                eprintln!("credential lookup failed: {e}");
+                return PollOutcome::Unauthenticated;
+            }
         }
     };
 
