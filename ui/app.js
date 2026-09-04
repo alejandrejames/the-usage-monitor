@@ -147,6 +147,12 @@ function renderStatus(snapshot) {
 el("refresh").addEventListener("click", () => invoke("refresh_now"));
 el("recheck").addEventListener("click", () => invoke("recheck_credentials"));
 
+// Quit is in the tray's right-click menu too, but that is not discoverable —
+// so both popover states carry a button.
+for (const id of ["quit", "quit-nc"]) {
+  el(id).addEventListener("click", () => invoke("quit_app"));
+}
+
 listen("usage://snapshot", (event) => render(event.payload));
 invoke("get_snapshot").then(render);
 

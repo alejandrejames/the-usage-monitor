@@ -48,6 +48,14 @@ fn recheck_credentials(app: tauri::AppHandle, state: tauri::State<'_, Arc<AppSta
     });
 }
 
+/// Quits the app. Exposed to the popover because the tray's right-click menu
+/// is not discoverable — the Swift original had Quit in its Settings window,
+/// and dropping it left no obvious way out.
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 // MARK: - Polling
 
 /// One usage poll, applying the result and notifying the UI and tray.
@@ -128,7 +136,12 @@ fn main() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .invoke_handler(tauri::generate_handler![get_snapshot, refresh_now, recheck_credentials])
+        .invoke_handler(tauri::generate_handler![
+            get_snapshot,
+            refresh_now,
+            recheck_credentials,
+            quit_app
+        ])
         .setup(|app| {
             let state = Arc::new(AppState::new());
             app.manage(Arc::clone(&state));
@@ -139,16 +152,24 @@ fn main() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
+            let refresh = MenuItem::with_id(app, "refresh", "Refresh", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&quit])?;
+            let menu = Menu::with_items(app, &[&refresh, &quit])?;
 
             TrayIconBuilder::with_id("main")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
-                .on_menu_event(|app, event| {
-                    if event.id.as_ref() == "quit" {
-                        app.exit(0);
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "quit" => app.exit(0),
+                    "refresh" => {
+                        if let Some(state) = app.try_state::<Arc<AppState>>() {
+                            let (app, state) = (app.clone(), Arc::clone(&state));
+                            std::thread::spawn(move || {
+                                run_poll(&app, &state);
+                            });
+                        }
                     }
+                    _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
                     use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
