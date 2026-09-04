@@ -11,6 +11,10 @@ to bump both and tag a release.
 
 ## [Unreleased]
 
+### Added
+- `docs/cross-platform.md` — plan of record for porting the app to Tauri v2
+  (macOS, Windows, Linux). Planning only; no code changes yet.
+
 ## [1.1.0] - 2026-06-11
 
 ### Added
