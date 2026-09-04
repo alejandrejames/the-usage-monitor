@@ -294,14 +294,64 @@ fn toggle_popover(app: &tauri::AppHandle) {
     if window.is_visible().unwrap_or(false) {
         let _ = window.hide();
     } else {
-        // Re-anchor on every open: the tray icon shifts as other menu-bar
-        // items appear and disappear.
-        #[cfg(not(target_os = "linux"))]
-        {
-            use tauri_plugin_positioner::{Position, WindowExt};
-            let _ = window.move_window(Position::TrayBottomCenter);
-        }
+        position_popover(&window);
         let _ = window.show();
         let _ = window.set_focus();
     }
+}
+
+/// Places the popover under the tray icon, falling back when that cannot work.
+///
+/// `TrayCenter` needs the tray rect, which the positioner only learns from a
+/// tray event — so the very first open (or an open triggered by anything other
+/// than a click) has nothing to anchor to. It is also known to mis-place on
+/// macOS multi-monitor setups, silently:
+/// <https://github.com/tauri-apps/plugins-workspace/issues/724>
+///
+/// So the result is validated rather than trusted: if the window would land
+/// off-screen or straddle a monitor edge, it is placed near the top-right of
+/// the active monitor instead — where a menu-bar item would be.
+fn position_popover(window: &tauri::WebviewWindow) {
+    #[cfg(target_os = "linux")]
+    {
+        // Wayland does not let a client position its own windows, so the
+        // compositor decides. Nothing useful to do here.
+        let _ = window;
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        use tauri_plugin_positioner::{Position, WindowExt};
+
+        if window.move_window(Position::TrayBottomCenter).is_ok() && popover_is_on_screen(window) {
+            return;
+        }
+        // Either the positioner had no tray rect yet, or it produced a
+        // position that is not usable on this display arrangement.
+        let _ = window.move_window(Position::TopRight);
+    }
+}
+
+/// True when the window sits fully inside the monitor it is on.
+///
+/// Guards against the multi-monitor case, where the positioner can return
+/// coordinates belonging to a different screen than the one the tray is on.
+#[cfg(not(target_os = "linux"))]
+fn popover_is_on_screen(window: &tauri::WebviewWindow) -> bool {
+    let (Ok(pos), Ok(size), Ok(Some(monitor))) =
+        (window.outer_position(), window.outer_size(), window.current_monitor())
+    else {
+        return false;
+    };
+
+    let m_pos = monitor.position();
+    let m_size = monitor.size();
+
+    let fits_horizontally = pos.x >= m_pos.x
+        && pos.x + size.width as i32 <= m_pos.x + m_size.width as i32;
+    // Only the top edge is checked vertically: a popover taller than the
+    // screen should still hang off the bottom rather than be relocated.
+    let starts_below_the_top = pos.y >= m_pos.y;
+
+    fits_horizontally && starts_below_the_top
 }
