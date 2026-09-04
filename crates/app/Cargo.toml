@@ -33,6 +33,9 @@ serde_json.workspace = true
 ureq = { version = "3", features = ["json"] }
 # Tray icon rendering. ab_glyph rasterises the digits; no shaping needed.
 ab_glyph = "0.2"
+# Decoding the bundled row icons. `png` alone, not the full `image` crate —
+# these are two known PNGs, not arbitrary user input.
+png = "0.17"
 
 # Windows only: querying the tray icon size for the current DPI. Unlike macOS,
 # which scales an oversized icon cleanly, Windows downscales poorly — so the

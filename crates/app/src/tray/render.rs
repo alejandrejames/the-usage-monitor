@@ -23,10 +23,119 @@ use claudeusage_core::UsageLevel;
 /// plain `.ttf`.
 const FONT: &[u8] = include_bytes!("../../assets/DejaVuSans-Bold.ttf");
 
+/// Row icons, bundled the same way as the font. These replace the SF Symbols
+/// (`timer`, `calendar`) the Swift app used, which do not exist off-Apple.
+const ICON_SESSION: &[u8] = include_bytes!("../../assets/icon-session.png");
+const ICON_WEEKLY: &[u8] = include_bytes!("../../assets/icon-weekly.png");
+
+/// Which icon a row shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowIcon {
+    Session,
+    Weekly,
+}
+
+impl RowIcon {
+    fn bytes(self) -> &'static [u8] {
+        match self {
+            Self::Session => ICON_SESSION,
+            Self::Weekly => ICON_WEEKLY,
+        }
+    }
+}
+
+/// A decoded icon: straight RGBA at its source resolution.
+struct DecodedIcon {
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+}
+
+/// Decodes a bundled PNG. Returns `None` rather than panicking so a bad asset
+/// degrades to a text-only icon instead of taking the app down.
+fn decode(bytes: &[u8]) -> Option<DecodedIcon> {
+    let decoder = png::Decoder::new(bytes);
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).ok()?;
+    buf.truncate(info.buffer_size());
+
+    // The bundled icons are RGBA8; anything else is not something to guess at.
+    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+        return None;
+    }
+    Some(DecodedIcon { rgba: buf, width: info.width, height: info.height })
+}
+
+/// Nearest-neighbour box sample into `size` x `size`, compositing onto `dst`.
+///
+/// Box-averaging rather than a single sample: these icons shrink from 1024px to
+/// roughly 20, and point-sampling that far down drops most strokes entirely.
+fn blit_icon(
+    icon: &DecodedIcon,
+    dst: &mut [u8],
+    dst_w: u32,
+    dst_h: u32,
+    at_x: i32,
+    at_y: i32,
+    size: u32,
+) {
+    if size == 0 {
+        return;
+    }
+    let step_x = icon.width as f32 / size as f32;
+    let step_y = icon.height as f32 / size as f32;
+
+    for oy in 0..size {
+        for ox in 0..size {
+            // Average the source block this destination pixel covers.
+            let (x0, x1) = ((ox as f32 * step_x) as u32, (((ox + 1) as f32) * step_x) as u32);
+            let (y0, y1) = ((oy as f32 * step_y) as u32, (((oy + 1) as f32) * step_y) as u32);
+            let (mut r, mut g, mut b, mut a, mut n) = (0u32, 0u32, 0u32, 0u32, 0u32);
+
+            for sy in y0..y1.max(y0 + 1).min(icon.height) {
+                for sx in x0..x1.max(x0 + 1).min(icon.width) {
+                    let i = ((sy * icon.width + sx) * 4) as usize;
+                    if i + 3 >= icon.rgba.len() {
+                        continue;
+                    }
+                    r += icon.rgba[i] as u32;
+                    g += icon.rgba[i + 1] as u32;
+                    b += icon.rgba[i + 2] as u32;
+                    a += icon.rgba[i + 3] as u32;
+                    n += 1;
+                }
+            }
+            if n == 0 {
+                continue;
+            }
+            let (r, g, b, a) = ((r / n) as u8, (g / n) as u8, (b / n) as u8, (a / n) as u8);
+            if a == 0 {
+                continue;
+            }
+
+            let (dx, dy) = (at_x + ox as i32, at_y + oy as i32);
+            if dx < 0 || dy < 0 || dx >= dst_w as i32 || dy >= dst_h as i32 {
+                continue;
+            }
+            let di = ((dy as u32 * dst_w + dx as u32) * 4) as usize;
+            // Source-over onto whatever is already there.
+            let sa = a as u32;
+            let inv = 255 - sa;
+            dst[di] = ((r as u32 * sa + dst[di] as u32 * inv) / 255) as u8;
+            dst[di + 1] = ((g as u32 * sa + dst[di + 1] as u32 * inv) / 255) as u8;
+            dst[di + 2] = ((b as u32 * sa + dst[di + 2] as u32 * inv) / 255) as u8;
+            dst[di + 3] = dst[di + 3].max(a);
+        }
+    }
+}
+
 /// A single row of the tray icon.
 pub struct Row {
     pub text: String,
     pub rgb: [u8; 3],
+    /// Drawn to the left of the text, if any.
+    pub icon: Option<RowIcon>,
 }
 
 impl Row {
@@ -35,7 +144,14 @@ impl Row {
         Self {
             text: format!("{}%", percent.round() as i64),
             rgb: UsageLevel::for_percent(percent).rgb(),
+            icon: None,
         }
+    }
+
+    /// The same row with an icon beside it.
+    pub fn with_icon(mut self, icon: RowIcon) -> Self {
+        self.icon = Some(icon);
+        self
     }
 
     /// The disconnected placeholder.
@@ -44,7 +160,7 @@ impl Row {
     /// exist off-Apple and would be illegible at 16 px on Windows anyway. A
     /// dash in secondary grey reads correctly at every size.
     pub fn disconnected() -> Self {
-        Self { text: "--".into(), rgb: [0x8E, 0x8E, 0x93] }
+        Self { text: "--".into(), rgb: [0x8E, 0x8E, 0x93], icon: None }
     }
 }
 
@@ -67,26 +183,55 @@ pub fn render_at(rows: &[Row], total_h: u32) -> Rendered {
     let rows_count = rows.len().max(1) as f32;
     let gap = if rows_count > 1.0 { (total_h as f32 * 0.06).max(1.0) } else { 0.0 };
     let row_h = (total_h as f32 - gap) / rows_count;
-    let scale = PxScale::from(row_h * 1.05);
+    let scale = PxScale::from(row_h * 0.98);
     let scaled = font.as_scaled(scale);
+
+    // Icons are square, sized to the row and inset slightly so they sit
+    // optically level with the digits rather than overpowering them.
+    let icon_size = (row_h * 0.78).round().max(1.0);
+    let icon_gap = (icon_size * 0.14).round().max(1.0);
+    let any_icons = rows.iter().any(|r| r.icon.is_some());
+    let text_offset = if any_icons { icon_size + icon_gap } else { 0.0 };
 
     // Width comes from the widest row, so a jump to "100%" does not clip. The
     // font's uniform digit advance keeps this stable across polls.
-    let width = rows
+    let text_width = rows
         .iter()
         .map(|r| r.text.chars().map(|c| scaled.h_advance(font.glyph_id(c))).sum::<f32>())
-        .fold(0.0f32, f32::max)
-        .ceil() as u32
-        + 2;
-    let width = width.max(1);
+        .fold(0.0f32, f32::max);
+    let width = ((text_offset + text_width).ceil() as u32 + 2).max(1);
 
     let mut rgba = vec![0u8; (width * total_h * 4) as usize];
 
+    // Decoded once per render rather than per row — both rows may want one.
+    let session_icon = any_icons.then(|| decode(RowIcon::Session.bytes())).flatten();
+    let weekly_icon = any_icons.then(|| decode(RowIcon::Weekly.bytes())).flatten();
+
     for (i, row) in rows.iter().enumerate() {
+        let row_top = gap / 2.0 + row_h * i as f32;
         // Baseline sits slightly above the row's bottom edge to leave room for
         // descenders; '%' has none but the metric keeps rows optically even.
         let baseline_y = gap / 2.0 + row_h * (i as f32 + 1.0) - row_h * 0.22;
-        let mut pen_x = 1.0f32;
+
+        if let Some(kind) = row.icon {
+            let decoded = match kind {
+                RowIcon::Session => session_icon.as_ref(),
+                RowIcon::Weekly => weekly_icon.as_ref(),
+            };
+            if let Some(decoded) = decoded {
+                blit_icon(
+                    decoded,
+                    &mut rgba,
+                    width,
+                    total_h,
+                    1,
+                    (row_top + (row_h - icon_size) / 2.0).round() as i32,
+                    icon_size as u32,
+                );
+            }
+        }
+
+        let mut pen_x = 1.0 + text_offset;
 
         for ch in row.text.chars() {
             let glyph_id = font.glyph_id(ch);
@@ -148,6 +293,25 @@ mod tests {
             widths.windows(2).all(|w| (w[0] - w[1]).abs() < 0.01),
             "digit advances must be uniform, got {widths:?}"
         );
+    }
+
+    #[test]
+    fn the_bundled_row_icons_decode() {
+        // decode() returns None on a bad asset so the tray degrades to text
+        // rather than panicking — which means a broken icon would otherwise
+        // ship silently.
+        for kind in [RowIcon::Session, RowIcon::Weekly] {
+            let icon = decode(kind.bytes()).unwrap_or_else(|| panic!("{kind:?} failed to decode"));
+            assert!(icon.width > 0 && icon.height > 0);
+            assert_eq!(icon.rgba.len(), (icon.width * icon.height * 4) as usize);
+        }
+    }
+
+    #[test]
+    fn an_icon_widens_the_row() {
+        let plain = render_at(&[Row::usage(72.0)], 54);
+        let with_icon = render_at(&[Row::usage(72.0).with_icon(RowIcon::Session)], 54);
+        assert!(with_icon.width > plain.width, "the icon must reserve its own space");
     }
 
     #[test]

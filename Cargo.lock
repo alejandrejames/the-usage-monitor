@@ -504,6 +504,7 @@ version = "1.1.0"
 dependencies = [
  "ab_glyph",
  "claudeusage-core",
+ "png 0.17.16",
  "serde",
  "serde_json",
  "tauri",

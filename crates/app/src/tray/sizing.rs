@@ -12,9 +12,14 @@
 //!
 //! See docs/cross-platform.md.
 
-/// macOS: 3x the 18 pt tray height the backend normalises to.
+/// macOS: 6x the 18 pt tray height the backend normalises to.
+///
+/// The backend scales this down to 18 pt regardless, so the number only sets
+/// the source resolution — a larger buffer buys sharpness, not size. It is
+/// doubled from the original 3x so the glyphs and row icons survive the
+/// downscale with more detail.
 #[cfg(not(windows))]
-pub const DEFAULT_RENDER_HEIGHT: u32 = 54;
+pub const DEFAULT_RENDER_HEIGHT: u32 = 108;
 
 /// Windows fallback when the metric cannot be read: 16 px is the 100 % DPI size.
 #[cfg(windows)]

@@ -34,10 +34,15 @@ fn rows_for(snapshot: &AppSnapshot) -> Vec<Row> {
         }
     };
 
+    // Icons replace the SF Symbols the Swift app used (timer / calendar).
+    use render::RowIcon;
     match crate::settings::get().tray_display {
-        TrayDisplay::Session => vec![row(snapshot.session_percent)],
-        TrayDisplay::Weekly => vec![row(snapshot.weekly_percent)],
-        TrayDisplay::Both => vec![row(snapshot.session_percent), row(snapshot.weekly_percent)],
+        TrayDisplay::Session => vec![row(snapshot.session_percent).with_icon(RowIcon::Session)],
+        TrayDisplay::Weekly => vec![row(snapshot.weekly_percent).with_icon(RowIcon::Weekly)],
+        TrayDisplay::Both => vec![
+            row(snapshot.session_percent).with_icon(RowIcon::Session),
+            row(snapshot.weekly_percent).with_icon(RowIcon::Weekly),
+        ],
     }
 }
 
