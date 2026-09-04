@@ -10,7 +10,7 @@ mod tray;
 
 use claudeusage_core::{status, Alert};
 use state::{AppSnapshot, AppState, PollOutcome};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use tauri::menu::{Menu, MenuItem};
@@ -53,7 +53,7 @@ fn recheck_credentials(app: tauri::AppHandle, state: tauri::State<'_, Arc<AppSta
 /// and dropping it left no obvious way out.
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
-    app.exit(0);
+    request_quit(&app);
 }
 
 // MARK: - Polling
@@ -160,7 +160,7 @@ fn main() {
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "quit" => app.exit(0),
+                    "quit" => request_quit(app),
                     "refresh" => {
                         if let Some(state) = app.try_state::<Arc<AppState>>() {
                             let (app, state) = (app.clone(), Arc::clone(&state));
@@ -214,11 +214,32 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to build ClaudeUsage")
         .run(|_app, event| {
-            // Closing the popover must not quit: the app lives in the tray.
+            // Closing the popover must not quit — the app lives in the tray —
+            // but a deliberate Quit must get through. `app.exit()` also raises
+            // ExitRequested, so blocking every one of them made the app
+            // unquittable from both the menu and the popover button.
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
-                api.prevent_exit();
+                if !quit_was_requested() {
+                    api.prevent_exit();
+                }
             }
         });
+}
+
+// MARK: - Quit
+
+/// Set when the user explicitly asks to quit, so the `ExitRequested` handler
+/// can tell a real Quit apart from the popover merely closing.
+static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Marks the shutdown as deliberate, then exits.
+fn request_quit(app: &tauri::AppHandle) {
+    QUIT_REQUESTED.store(true, Ordering::SeqCst);
+    app.exit(0);
+}
+
+fn quit_was_requested() -> bool {
+    QUIT_REQUESTED.load(Ordering::SeqCst)
 }
 
 // MARK: - Popover visibility
