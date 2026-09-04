@@ -24,6 +24,9 @@ tauri        = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-notification    = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-autostart       = "2"
+# tray-icon feature: required for Position::TrayCenter, which anchors the
+# popover under the menu-bar item instead of centring it on screen.
+tauri-plugin-positioner      = { version = "2", features = ["tray-icon"] }
 serde.workspace      = true
 serde_json.workspace = true
 # Blocking HTTP: the pollers run on their own threads, so no async runtime.

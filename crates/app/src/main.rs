@@ -131,6 +131,7 @@ fn main() {
                 let _ = window.set_focus();
             }
         }))
+        .plugin(tauri_plugin_positioner::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -173,6 +174,9 @@ fn main() {
                 })
                 .on_tray_icon_event(|tray, event| {
                     use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
+                    // Feeds the positioner the tray rect; without this
+                    // TrayCenter has nothing to anchor to.
+                    tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
@@ -290,6 +294,13 @@ fn toggle_popover(app: &tauri::AppHandle) {
     if window.is_visible().unwrap_or(false) {
         let _ = window.hide();
     } else {
+        // Re-anchor on every open: the tray icon shifts as other menu-bar
+        // items appear and disappear.
+        #[cfg(not(target_os = "linux"))]
+        {
+            use tauri_plugin_positioner::{Position, WindowExt};
+            let _ = window.move_window(Position::TrayBottomCenter);
+        }
         let _ = window.show();
         let _ = window.set_focus();
     }

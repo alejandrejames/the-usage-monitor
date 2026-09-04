@@ -17,6 +17,7 @@ if (!tauri) {
 }
 const { invoke } = tauri.core;
 const { listen } = tauri.event;
+const { getCurrentWindow, LogicalSize } = tauri.window;
 
 // Thresholds must match Theme.swift / UsageLevel::for_percent.
 function usageColor(percent) {
@@ -155,6 +156,37 @@ for (const id of ["quit", "quit-nc"]) {
 
 listen("usage://snapshot", (event) => render(event.payload));
 invoke("get_snapshot").then(render);
+
+// Shrink the window to whatever is actually rendered. The panel's height
+// varies — the status accordion expands, and the no-credential state is much
+// shorter than the usage panel — so a fixed height would leave dead space
+// below the content.
+let lastHeight = 0;
+async function fitWindow() {
+  const visible = document.querySelector("section:not([hidden])");
+  if (!visible) return;
+  // Body padding is not included in the section's own box.
+  const style = getComputedStyle(document.body);
+  const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+  const height = Math.ceil(visible.getBoundingClientRect().height + padding);
+  if (height > 0 && Math.abs(height - lastHeight) > 1) {
+    lastHeight = height;
+    try {
+      await getCurrentWindow().setSize(new LogicalSize(320, height));
+    } catch {
+      // Resizing is a nicety; a denied permission must not break the panel.
+    }
+  }
+}
+
+// Re-fit after any render, and when the status accordion is toggled.
+const fitSoon = () => requestAnimationFrame(fitWindow);
+new MutationObserver(fitSoon).observe(document.body, {
+  subtree: true,
+  childList: true,
+  attributes: true,
+});
+document.querySelector(".status")?.addEventListener("toggle", fitSoon);
 
 // Keep the countdowns and "updated Nm ago" honest without re-polling.
 setInterval(() => latest && render(latest), 30000);
