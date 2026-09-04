@@ -9,3 +9,9 @@ description = "Platform-agnostic usage polling, status, and alert logic for Clau
 [dependencies]
 serde.workspace      = true
 serde_json.workspace = true
+
+# macOS only: the native keychain fallback, used when a signed build can read
+# the item without the ACL prompt. The primary macOS path shells out to
+# /usr/bin/security and needs no dependency. See docs/cross-platform.md.
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7"

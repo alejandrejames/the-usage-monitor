@@ -7,14 +7,17 @@
 //! Ported from the Swift sources under `Shared/`. See `docs/cross-platform.md`
 //! for the port plan and the constraints that shaped it.
 //!
-//! `credentials` lands in Phase 2 — it is the only module with per-OS branches.
+//! `credentials` is the one exception to "no OS calls": credential storage
+//! genuinely differs per platform, so it carries the only `cfg` branches.
 
 pub mod alerts;
+pub mod credentials;
 pub mod model;
 pub mod status;
 pub mod usage;
 
 pub use alerts::{Alert, AlertSettings};
+pub use credentials::{CachedCredentials, CredentialError, Credentials, SourceKind};
 pub use model::{
     all_operational, overall_health, ServiceHealth, ServiceStatus, UsageLevel, UsageSnapshot,
 };
