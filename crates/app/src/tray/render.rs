@@ -62,8 +62,11 @@ pub struct Rendered {
 pub fn render_at(rows: &[Row], total_h: u32) -> Rendered {
     let font = FontRef::try_from_slice(FONT).expect("bundled font must parse");
 
-    let gap = (total_h as f32 * 0.06).max(1.0);
-    let row_h = (total_h as f32 - gap) / 2.0;
+    // One row fills the icon; two share it. Without this a single-row display
+    // would render at half height and look shrunken next to other menu items.
+    let rows_count = rows.len().max(1) as f32;
+    let gap = if rows_count > 1.0 { (total_h as f32 * 0.06).max(1.0) } else { 0.0 };
+    let row_h = (total_h as f32 - gap) / rows_count;
     let scale = PxScale::from(row_h * 1.05);
     let scaled = font.as_scaled(scale);
 

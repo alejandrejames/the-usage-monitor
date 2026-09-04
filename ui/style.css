@@ -161,6 +161,64 @@ h1 { font-size: 13px; font-weight: 600; margin: 0; }
   padding: 3px 0;
 }
 
+/* Settings */
+
+.settings {
+  border-top: 0.5px solid var(--border);
+  padding-top: 10px;
+  margin-bottom: 10px;
+}
+
+.settings summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: default;
+  font-size: 11px;
+  color: var(--fg-muted);
+  list-style: none;
+}
+
+.settings summary::-webkit-details-marker { display: none; }
+
+.chev {
+  font-size: 12px;
+  line-height: 1;
+  transition: transform 140ms;
+}
+
+.settings[open] .chev { transform: rotate(90deg); }
+
+.setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+  padding: 5px 0;
+}
+
+.setting label { color: var(--fg-muted); }
+.setting-meta { color: var(--fg-tertiary); }
+.setting:first-of-type { margin-top: 6px; }
+
+.input {
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  background: var(--btn-bg);
+  border: none;
+  border-radius: 6px;
+  padding: 3px 6px;
+  max-width: 130px;
+}
+
+/* Native checkbox, tinted to the app's accent. */
+.setting input[type="checkbox"] {
+  accent-color: var(--usage-green);
+  margin: 0;
+}
+
 /* Footer */
 
 footer {

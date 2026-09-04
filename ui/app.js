@@ -100,6 +100,9 @@ function render(snapshot) {
       : resetString(snapshot[`${key}ResetAtMs`], style);
   }
 
+  el("cred-source").textContent = snapshot.credentialSource ?? "—";
+  el("app-version").textContent = snapshot.version ?? "—";
+
   renderStatus(snapshot);
   el("last-updated").textContent = snapshot.isStale
     ? "offline"
@@ -149,6 +152,44 @@ function renderStatus(snapshot) {
     worst === "operational" ? "All systems operational" : labels[worst] ?? "Service status";
 }
 
+// MARK: - Settings
+
+// Applied optimistically, then reconciled with what the backend actually
+// stored — it clamps out-of-range values, so the UI must not assume its own
+// input survived unchanged.
+async function loadSettings() {
+  try {
+    const s = await invoke("get_settings");
+    el("interval").value = String(s.refreshInterval);
+    el("tray-display").value = s.trayDisplay;
+    el("alert80").checked = s.alert80;
+    el("alert95").checked = s.alert95;
+  } catch {
+    // Settings are a convenience; the panel still works without them.
+  }
+}
+
+async function saveSettings() {
+  try {
+    const saved = await invoke("set_settings", {
+      settings: {
+        refreshInterval: Number(el("interval").value),
+        trayDisplay: el("tray-display").value,
+        alert80: el("alert80").checked,
+        alert95: el("alert95").checked,
+      },
+    });
+    // Reflect any clamping back into the controls.
+    el("interval").value = String(saved.refreshInterval);
+  } catch {
+    // Leave the controls as the user set them; the change just did not persist.
+  }
+}
+
+for (const id of ["interval", "tray-display", "alert80", "alert95"]) {
+  el(id).addEventListener("change", saveSettings);
+}
+
 el("refresh").addEventListener("click", () => invoke("refresh_now"));
 el("recheck").addEventListener("click", () => invoke("recheck_credentials"));
 
@@ -160,6 +201,7 @@ for (const id of ["quit", "quit-nc"]) {
 
 listen("usage://snapshot", (event) => render(event.payload));
 invoke("get_snapshot").then(render);
+loadSettings();
 
 // Shrink the window to whatever is actually rendered. The panel's height
 // varies — the status accordion expands, and the no-credential state is much

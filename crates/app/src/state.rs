@@ -5,8 +5,7 @@
 //! the UI is notified explicitly via a Tauri event.
 
 use claudeusage_core::{
-    alerts, credentials::CachedCredentials, status, usage, Alert, AlertSettings, ServiceStatus,
-    UsageSnapshot, DEFAULT_POLL_INTERVAL_SECS,
+    alerts, credentials::CachedCredentials, status, usage, Alert, ServiceStatus, UsageSnapshot,
 };
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
@@ -16,7 +15,7 @@ use std::time::Duration;
 ///
 /// Reset times stay as epoch millis; the WebView formats them with
 /// `Intl.DateTimeFormat`, which has locale data Rust would need `icu` for.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSnapshot {
     pub session_percent: f64,
@@ -31,12 +30,38 @@ pub struct AppSnapshot {
     pub plan: Option<String>,
     pub services: Vec<ServiceStatus>,
     pub status_is_stale: bool,
+    /// Which credential source resolved, for the settings panel. Diagnosing
+    /// auth problems from a GUI is otherwise guesswork.
+    pub credential_source: Option<String>,
+    /// App version, so the panel can show it without a separate command.
+    pub version: String,
+}
+
+impl Default for AppSnapshot {
+    fn default() -> Self {
+        Self {
+            session_percent: 0.0,
+            weekly_percent: 0.0,
+            session_reset_at_ms: None,
+            weekly_reset_at_ms: None,
+            last_updated_ms: None,
+            is_stale: false,
+            is_authenticated: false,
+            plan: None,
+            services: Vec::new(),
+            status_is_stale: false,
+            credential_source: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
 }
 
 /// Shared application state.
 pub struct AppState {
     pub snapshot: Mutex<AppSnapshot>,
     pub credentials: Mutex<CachedCredentials>,
+    /// Label of the source that last resolved a credential.
+    credential_source: Mutex<Option<String>>,
     /// Previous session percentage, for edge-triggered alerts.
     last_session_percent: Mutex<f64>,
 }
@@ -46,6 +71,7 @@ impl AppState {
         Self {
             snapshot: Mutex::new(AppSnapshot::default()),
             credentials: Mutex::new(CachedCredentials::with_default_sources()),
+            credential_source: Mutex::new(None),
             last_session_percent: Mutex::new(0.0),
         }
     }
@@ -99,6 +125,8 @@ pub fn poll_once(state: &AppState) -> PollOutcome {
         let mut creds = state.credentials.lock().expect("credential lock");
         match creds.token() {
             Ok(resolved) => {
+                *state.credential_source.lock().expect("source lock") =
+                    Some(resolved.source.label().to_string());
                 // Log which source won, once per change. Diagnosing "Claude
                 // Code not detected" from a GUI is otherwise guesswork — the
                 // credential chain is the most environment-sensitive part of
@@ -172,9 +200,10 @@ pub fn apply_usage(state: &AppState, snapshot: UsageSnapshot) -> Option<Alert> {
         s.is_stale = false;
         s.is_authenticated = true;
         s.plan = plan;
+        s.credential_source = state.credential_source.lock().expect("source lock").clone();
     }
 
-    alerts::check(previous, snapshot.session_percent, AlertSettings::default())
+    alerts::check(previous, snapshot.session_percent, crate::settings::get().alerts())
 }
 
 pub fn mark_stale(state: &AppState, authenticated: bool) {
@@ -186,7 +215,9 @@ pub fn mark_stale(state: &AppState, authenticated: bool) {
 /// Seconds to wait before the next usage poll.
 pub fn next_delay(consecutive_failures: u32) -> Duration {
     Duration::from_secs(if consecutive_failures == 0 {
-        DEFAULT_POLL_INTERVAL_SECS
+        // Read per tick, so a changed interval takes effect on the next cycle
+        // without restarting the poller.
+        crate::settings::get().refresh_interval
     } else {
         claudeusage_core::backoff_secs(consecutive_failures)
     })
@@ -269,9 +300,10 @@ mod tests {
 
     #[test]
     fn backoff_applies_only_after_a_failure() {
-        assert_eq!(next_delay(0).as_secs(), DEFAULT_POLL_INTERVAL_SECS);
+        // A clean poll waits the configured interval, not a backoff.
+        assert_eq!(next_delay(0).as_secs(), crate::settings::get().refresh_interval);
         assert_eq!(next_delay(1).as_secs(), 20);
-        // Capped at the normal cadence.
-        assert_eq!(next_delay(9).as_secs(), DEFAULT_POLL_INTERVAL_SECS);
+        // Capped at core's ceiling rather than growing without bound.
+        assert_eq!(next_delay(9).as_secs(), claudeusage_core::DEFAULT_POLL_INTERVAL_SECS);
     }
 }

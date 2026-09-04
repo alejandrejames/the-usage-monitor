@@ -5,6 +5,7 @@
 //!
 //! Replaces the SwiftUI `MenuBarExtra` host from `ClaudeUsageApp.swift`.
 
+mod settings;
 mod state;
 mod tray;
 
@@ -46,6 +47,29 @@ fn recheck_credentials(app: tauri::AppHandle, state: tauri::State<'_, Arc<AppSta
     std::thread::spawn(move || {
         run_poll(&app, &state);
     });
+}
+
+/// Current settings, for the settings panel.
+#[tauri::command]
+fn get_settings() -> settings::Settings {
+    settings::get()
+}
+
+/// Persists settings and applies them immediately.
+///
+/// Returns the saved value so the UI reflects any clamping rather than
+/// silently disagreeing with what was stored.
+#[tauri::command]
+fn set_settings(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    settings: settings::Settings,
+) -> settings::Settings {
+    let saved = settings::save(settings);
+    // Re-render the tray straight away so a display change is visible without
+    // waiting for the next poll.
+    publish(&app, state.inner());
+    saved
 }
 
 /// Quits the app. Exposed to the popover because the tray's right-click menu
@@ -141,7 +165,9 @@ fn main() {
             get_snapshot,
             refresh_now,
             recheck_credentials,
-            quit_app
+            quit_app,
+            get_settings,
+            set_settings
         ])
         .setup(|app| {
             let state = Arc::new(AppState::new());

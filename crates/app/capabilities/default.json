@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Lets the popover call the app's own commands and receive state updates. Tauri v2 denies all IPC unless a capability grants it, so without this the popover renders its default state forever.",
+  "description": "Lets the popover call the app's own commands, receive state updates, and resize itself. Tauri v2 denies all IPC unless a capability grants it.",
   "windows": [
     "main"
   ],

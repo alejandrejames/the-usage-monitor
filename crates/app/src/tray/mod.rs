@@ -21,12 +21,23 @@ use render::Row;
 use tauri::image::Image;
 use tauri::tray::TrayIcon;
 
-/// Rows for the current snapshot.
+/// Rows for the current snapshot, honouring the display preference.
 fn rows_for(snapshot: &AppSnapshot) -> Vec<Row> {
-    if snapshot.is_stale || !snapshot.is_authenticated {
-        vec![Row::disconnected(), Row::disconnected()]
-    } else {
-        vec![Row::usage(snapshot.session_percent), Row::usage(snapshot.weekly_percent)]
+    use crate::settings::TrayDisplay;
+
+    let disconnected = snapshot.is_stale || !snapshot.is_authenticated;
+    let row = |percent: f64| {
+        if disconnected {
+            Row::disconnected()
+        } else {
+            Row::usage(percent)
+        }
+    };
+
+    match crate::settings::get().tray_display {
+        TrayDisplay::Session => vec![row(snapshot.session_percent)],
+        TrayDisplay::Weekly => vec![row(snapshot.weekly_percent)],
+        TrayDisplay::Both => vec![row(snapshot.session_percent), row(snapshot.weekly_percent)],
     }
 }
 
@@ -138,6 +149,16 @@ mod tests {
         let rows = rows_for(&snapshot);
         assert_eq!(rows[0].text, "--");
         assert_eq!(rows[1].text, "--");
+    }
+
+    #[test]
+    fn a_single_row_display_renders_at_full_height() {
+        // A one-row icon must fill the tray height; sharing it with an absent
+        // second row would render at half size and look shrunken.
+        let one = render::render_at(&[Row::usage(43.0)], 54);
+        let two = render::render_at(&[Row::usage(43.0), Row::usage(71.0)], 54);
+        assert_eq!(one.height, two.height, "both fill the same icon box");
+        assert!(one.width > two.width, "taller glyphs are also wider");
     }
 
     #[test]
