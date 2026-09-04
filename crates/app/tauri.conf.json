@@ -10,7 +10,7 @@
       {
         "label": "main",
         "title": "Claude Usage",
-        "width": 320,
+        "width": 280,
         "height": 300,
         "resizable": false,
         "decorations": false,

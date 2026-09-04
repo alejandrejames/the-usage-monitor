@@ -85,7 +85,11 @@ function render(snapshot) {
 
     // A dimmed number would read as a real (low) value, so show a dash
     // instead — the same reasoning as the tray's disconnected placeholder.
-    el(`${key}-value`).textContent = stale ? "—" : `${Math.round(percent)}%`;
+    const value = el(`${key}-value`);
+    value.textContent = stale ? "—" : `${Math.round(percent)}%`;
+    // The number carries the threshold colour too, not just the bar — that is
+    // how the Swift original read at a glance.
+    value.style.color = stale ? "var(--fg-muted)" : usageColor(percent);
 
     const bar = el(`${key}-bar`);
     bar.style.width = stale ? "0%" : `${Math.min(100, Math.max(0, percent))}%`;
@@ -172,7 +176,7 @@ async function fitWindow() {
   if (height > 0 && Math.abs(height - lastHeight) > 1) {
     lastHeight = height;
     try {
-      await getCurrentWindow().setSize(new LogicalSize(320, height));
+      await getCurrentWindow().setSize(new LogicalSize(280, height));
     } catch {
       // Resizing is a nicety; a denied permission must not break the panel.
     }

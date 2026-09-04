@@ -10,7 +10,9 @@
   --bg:          rgba(246, 246, 248, 0.72);
   --fg:          #1c1c1e;
   --fg-muted:    #6c6c70;
+  --fg-tertiary: #8e8e93;
   --track:       rgba(120, 120, 128, 0.18);
+  --bar-track:   rgba(0, 0, 0, 0.10);
   --border:      rgba(120, 120, 128, 0.22);
   --btn-bg:      rgba(120, 120, 128, 0.14);
   --btn-bg-hover: rgba(120, 120, 128, 0.24);
@@ -21,7 +23,9 @@
     --bg:       rgba(30, 30, 32, 0.72);
     --fg:       #f2f2f7;
     --fg-muted: #98989f;
+    --fg-tertiary: #6c6c70;
     --track:    rgba(120, 120, 128, 0.28);
+    --bar-track: rgba(255, 255, 255, 0.12);
     --border:   rgba(120, 120, 128, 0.32);
     --btn-bg:      rgba(120, 120, 128, 0.24);
     --btn-bg-hover: rgba(120, 120, 128, 0.36);
@@ -42,7 +46,7 @@ html, body {
 }
 
 body {
-  padding: 12px 14px;
+  padding: 14px 16px 12px;
   background: var(--bg);
   backdrop-filter: blur(28px) saturate(180%);
   -webkit-backdrop-filter: blur(28px) saturate(180%);
@@ -57,11 +61,12 @@ header {
   margin-bottom: 12px;
 }
 
-h1 { font-size: 14px; font-weight: 600; margin: 0; }
+h1 { font-size: 13px; font-weight: 600; margin: 0; }
 
 .plan {
-  font-size: 11px;
-  color: var(--fg-muted);
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--fg-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -77,19 +82,20 @@ h1 { font-size: 14px; font-weight: 600; margin: 0; }
   margin-bottom: 5px;
 }
 
-.metric-label { font-size: 12px; color: var(--fg-muted); }
+.metric-label { font-size: 12px; font-weight: 500; color: var(--fg-muted); }
 
 .metric-value {
-  font-size: 17px;
+  font-size: 13px;
   font-weight: 600;
-  /* Tabular figures so the number does not shift as usage changes. */
+  /* Coloured by threshold, as in the Swift original — the number carries the
+     signal, not just the bar. */
   font-variant-numeric: tabular-nums;
 }
 
 .bar {
   height: 6px;
   border-radius: 3px;
-  background: var(--track);
+  background: var(--bar-track);
   overflow: hidden;
 }
 
@@ -103,8 +109,8 @@ h1 { font-size: 14px; font-weight: 600; margin: 0; }
 
 .metric-reset {
   margin-top: 5px;
-  font-size: 11px;
-  color: var(--fg-muted);
+  font-size: 10px;
+  color: var(--fg-tertiary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -121,7 +127,7 @@ h1 { font-size: 14px; font-weight: 600; margin: 0; }
   align-items: center;
   gap: 7px;
   cursor: default;
-  font-size: 12px;
+  font-size: 11px;
   list-style: none;
 }
 
@@ -150,7 +156,7 @@ h1 { font-size: 14px; font-weight: 600; margin: 0; }
 .status li {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--fg-muted);
   padding: 3px 0;
 }
