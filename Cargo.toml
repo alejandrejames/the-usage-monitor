@@ -1,0 +1,19 @@
+# Cargo workspace — cross-platform ClaudeUsage.
+# See docs/cross-platform.md for the port plan.
+
+[workspace]
+resolver = "2"
+members = ["crates/core"]
+
+# Single source of truth for the app version (see the versioning migration
+# section in docs/cross-platform.md). project.yml still holds the version for
+# the legacy Xcode build until that target is retired.
+[workspace.package]
+version    = "1.1.0"
+edition    = "2021"
+license    = "MIT"
+repository = "https://github.com/alejandrejames/the-usage-monitor"
+
+[workspace.dependencies]
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
