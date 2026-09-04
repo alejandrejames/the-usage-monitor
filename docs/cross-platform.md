@@ -4,9 +4,9 @@ Plan of record for porting ClaudeUsage from a macOS-only Swift menu-bar app to a
 single codebase running on **macOS, Windows, and Linux** (Ubuntu, Debian, Arch,
 Bazzite).
 
-Status: **Phases 1–2 complete.** `crates/core` is built and tested (62 tests)
-and the credential chain is verified on macOS for both the keychain and file
-paths; `crates/app` and `ui/` do not exist yet.
+Status: **Phases 1–3 complete.** The macOS app builds, runs and polls live
+(94 tests). Windows and Linux are untouched. Spikes A and B are done; C still
+needs hardware.
 
 ---
 
@@ -371,12 +371,42 @@ native keychain API, which blocks on the ACL dialog and hangs indefinitely in a
 non-interactive shell — pass `--all` to force the full sweep. This is a probe
 concern only; in the GUI a user is present to click.
 
-### Phase 3 — macOS parity
+### Phase 3 — macOS parity ✅ **DONE**
 
-Tauri shell reaching feature parity with today's app. Set the activation policy
-to **`Accessory`** or the app shows a Dock icon and steals focus — the direct
-replacement for `MenuBarExtra`'s implicit behaviour. Wire focus-loss auto-hide
-via `WindowEvent::Focused(false)`.
+`crates/app` (Tauri host) and `ui/` (popover) landed; the app builds, runs,
+installs its tray and polls live. Activation policy is `Accessory` and
+focus-loss auto-hide is wired via `WindowEvent::Focused(false)`.
+
+Verified with `cargo run -p claudeusage --bin pollcheck`, which drives the whole
+chain outside the GUI:
+
+```
+USAGE OK
+  session: 59%
+  weekly:  31%
+STATUS: ok
+  claude.ai      Operational
+  Claude Code    Operational
+```
+
+**The tray icon could not be screenshotted** — the session lacks Screen
+Recording permission — so it was verified by rendering the identical code path
+to PNG and inspecting that instead.
+
+Two follow-ups this phase created, both for Phase 6:
+
+- **The version is now in three places**: `Cargo.toml`, `project.yml`, and
+  `tauri.conf.json`. Tauri's `"version": "../../Cargo.toml"` inheritance reads a
+  *package* manifest and rejects a workspace root, so it is hardcoded for now.
+  The versioning migration must reconcile all three.
+- **`crates/app/icons/` holds generated placeholders**, not designed artwork.
+
+#### Toolchain
+
+Tauri's dependency tree needs **rustc 1.88+**; Homebrew's rust (1.85) shadows
+rustup on `PATH` here, so `rust-toolchain.toml` pins the project to rustup's
+stable. `.nvmrc` pins Node 22. There is no bundler or `package.json` — the UI is
+plain HTML/CSS/JS, so Node is needed only by the Tauri CLI itself.
 
 ### Phase 4 — Windows (**before Linux**)
 
@@ -447,7 +477,11 @@ Table stakes for a tray app, absent from the current Swift feature set:
 - ~~**Phase 2**~~ — **done.** `cargo run -p claudeusage-core --bin probe`
   resolves via the security CLI on macOS, and via the file source (the Linux and
   Windows path) when `CLAUDE_CONFIG_DIR` points at one. Both verified.
-- **Phases 3–5** — on each OS: tray renders and updates; popover opens on click
+- ~~**Phase 3**~~ — **done on macOS.** App builds and runs, tray installs,
+  `pollcheck` resolves credentials, usage headers and status against the live
+  API. Still to confirm by hand: popover open/auto-hide behaviour and that the
+  80/95 % notifications fire, both of which need an interactive session.
+- **Phases 4–5** — on each OS: tray renders and updates; popover opens on click
   and auto-hides on focus loss; 80/95 % notifications fire once; the app survives
   a token refresh without prompting; the disconnected state renders when offline.
 

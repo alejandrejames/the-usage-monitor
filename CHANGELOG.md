@@ -23,6 +23,12 @@ to bump both and tag a release.
   (credentials file, `/usr/bin/security`, native keychain) and the plaintext
   `.credentials.json` on Linux and Windows, honouring `CLAUDE_CONFIG_DIR`.
   Includes a `probe` binary for verifying the chain on any platform.
+- `crates/app` and `ui/` — the Tauri v2 host and popover. Renders the tray icon
+  with a bundled DejaVu Sans Bold (tabular digits, so the icon does not jitter),
+  polls usage and service status on background threads, and fires the 80/95 %
+  notifications. The popover is plain HTML/CSS/JS; reset times are formatted
+  with `Intl.DateTimeFormat`. A `pollcheck` binary verifies a live poll outside
+  the GUI. macOS only so far.
 
 ## [1.1.0] - 2026-06-11
 
