@@ -63,12 +63,11 @@ let pollIntervalSecs = 60;
 /// separately-run timer would drift out of step with it after a failed poll
 /// or a settings change.
 function footerText(snapshot) {
-  if (snapshot.isStale) {
-    // A failed poll backs off, so the next attempt is not on the normal
-    // cadence and promising a time would be wrong.
-    return "offline — retrying";
-  }
-  if (snapshot.lastUpdatedMs == null) return "—";
+  if (snapshot.lastUpdatedMs == null) return snapshot.isStale ? "offline — retrying" : "—";
+  // Only once the reading is genuinely old, matching the banner. A failed
+  // poll backs off, so the next attempt is off the normal cadence and
+  // promising a time would be wrong.
+  if (snapshot.isStale && isReadingOld(snapshot)) return "offline — retrying";
 
   const updated = `updated ${relativeTime(snapshot.lastUpdatedMs)}`;
   const dueMs = snapshot.lastUpdatedMs + pollIntervalSecs * 1000;
@@ -145,6 +144,16 @@ function render(snapshot) {
   el("last-updated").textContent = footerText(snapshot);
 }
 
+/// Whether the last good reading is old enough to be worth warning about.
+///
+/// Two missed polls, so one transient failure that the next poll recovers
+/// never surfaces a banner. With no reading at all there is nothing to age,
+/// and the warning is always warranted.
+function isReadingOld(snapshot) {
+  if (snapshot.lastUpdatedMs == null) return true;
+  return Date.now() - snapshot.lastUpdatedMs > pollIntervalSecs * 2000;
+}
+
 /// The banner above the metrics. Separates "your quota is spent" from "the
 /// app cannot reach the API" — identical from the numbers alone, very
 /// different in what they mean.
@@ -165,7 +174,11 @@ function renderNotice(snapshot, stale, hasReading) {
     return;
   }
 
-  if (stale) {
+  // Only complain once the reading is genuinely old. `isStale` flips on the
+  // first failed attempt, but the status poller republishes the snapshot on
+  // its own 5-minute cadence, so a single blip would otherwise leave the
+  // banner up next to a footer reading "updated just now".
+  if (stale && isReadingOld(snapshot)) {
     notice.hidden = false;
     notice.className = "notice offline";
     icon.textContent = "\u26A0\uFE0F";
@@ -283,14 +296,17 @@ let lastHeight = 0;
 async function fitWindow() {
   const visible = document.querySelector("section:not([hidden])");
   if (!visible) return;
-  // Body padding is not included in the section's own box.
+  // The section's own rect already includes its padding; what it misses is
+  // the body's 1px transparent gutter that keeps the rounded corners off the
+  // window edge.
   const style = getComputedStyle(document.body);
   const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
   const height = Math.ceil(visible.getBoundingClientRect().height + padding);
   if (height > 0 && Math.abs(height - lastHeight) > 1) {
     lastHeight = height;
     try {
-      await getCurrentWindow().setSize(new LogicalSize(280, height));
+      // 282 = the 280pt panel plus the body's 1px gutter on each side.
+      await getCurrentWindow().setSize(new LogicalSize(282, height));
     } catch {
       // Resizing is a nicety; a denied permission must not break the panel.
     }
@@ -312,5 +328,5 @@ setInterval(() => latest && render(latest), 30000);
 // The next-poll countdown ticks every second, and only touches one node so it
 // does not fight the window auto-fit.
 setInterval(() => {
-  if (latest && !latest.isStale) el("last-updated").textContent = footerText(latest);
+  if (latest && latest.isAuthenticated) el("last-updated").textContent = footerText(latest);
 }, 1000);
