@@ -52,6 +52,11 @@ impl Default for Settings {
 
 impl Settings {
     /// Polling intervals offered in the UI, mirroring the Swift picker.
+    ///
+    /// The `<select>` in index.html is what the user actually sees; this exists
+    /// so a test can prove every offered value survives `sanitised()`, which a
+    /// list living only in the HTML could not.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub const INTERVAL_CHOICES: &'static [u64] = &[30, 60, 120, 300];
 
     /// Clamps values that would misbehave if hand-edited in the JSON file.

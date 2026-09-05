@@ -48,6 +48,11 @@ impl RowIcon {
 struct DecodedIcon {
     rgba: Vec<u8>,
     width: u32,
+    /// Only the tests read this — the blitter works from `content` instead,
+    /// since the source art has transparent margin. Kept because the tests use
+    /// it to verify the decoded buffer size and that the content box lies
+    /// inside the canvas, which is what makes the cropping trustworthy.
+    #[cfg_attr(not(test), allow(dead_code))]
     height: u32,
     /// Bounding box of the non-transparent pixels, as (x0, y0, x1, y1)
     /// inclusive. The bundled art carries different amounts of transparent
