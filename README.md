@@ -7,7 +7,7 @@ session window and the 7-day weekly window — in your menu bar or system tray,
 with a popover on click.
 
 **macOS, Windows and Linux** (Ubuntu, Debian, Arch, Bazzite). Built with Rust
-and Tauri v2; ~5.6 MB.
+and Tauri v2; ~8.8 MB.
 
 ---
 
@@ -76,8 +76,9 @@ ClaudeUsage/
 ├── ui/                       popover: index.html, style.css, app.js
 ├── packaging/                Linux container build (.deb/.rpm/.AppImage)
 └── docs/
-    ├── cross-platform.md     the port: decisions, measurements, phases
-    └── auth.md               credential sources and the macOS chain
+    ├── architecture.md       how it works, and why — start here
+    ├── auth.md               credential sources and the macOS chain
+    └── cross-platform.md     the port's record and its measurements
 ```
 
 ---

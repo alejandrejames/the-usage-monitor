@@ -1,14 +1,18 @@
-# Cross-platform refactor — ClaudeUsage → Tauri v2
+# The cross-platform port — a record
 
-Plan of record for porting ClaudeUsage from a macOS-only Swift menu-bar app to a
-single codebase running on **macOS, Windows, and Linux** (Ubuntu, Debian, Arch,
-Bazzite).
+How ClaudeUsage went from a macOS-only Swift menu-bar app to a single codebase
+running on **macOS, Windows, and Linux** (Ubuntu, Debian, Arch, Bazzite).
 
-Status: **Port complete — all six phases done.** macOS runs and is verified
-live (98 tests). Linux compiles, lints and tests in a container (88 tests).
-Windows is written and cross-compile-checked. **Neither Windows nor Linux has
-been run on real hardware yet, and the macOS tray has not been visually
-confirmed** — those checks are with the user.
+> **This is the record of the port, not a description of the system.**
+> For how ClaudeUsage works today, read [architecture.md](architecture.md).
+> This document is kept because the measurements behind several non-obvious
+> decisions live here — the keychain timings, the tray-scaling behaviour, the
+> Linux `set_icon` cost — and re-deriving them would be expensive.
+
+Status: **complete.** All six phases done, plus the UI work that followed.
+macOS runs and is in daily use. Linux compiles, lints and tests in a
+container. Windows is cross-compile-checked only. **Neither Windows nor Linux
+has been run on real hardware.**
 
 ---
 
