@@ -61,6 +61,17 @@ header {
   margin-bottom: 12px;
 }
 
+/* The version sits with the title, so `space-between` keeps pushing the plan
+   badge to the right edge rather than centring it as a third flex item. */
+header h1 { margin-right: 5px; }
+header .version { margin-right: auto; }
+
+.version {
+  font-size: 10px;
+  color: var(--fg-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
 h1 { font-size: 13px; font-weight: 600; margin: 0; }
 
 .plan {

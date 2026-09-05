@@ -139,6 +139,8 @@ function render(snapshot) {
 
   el("cred-source").textContent = snapshot.credentialSource ?? "—";
   el("app-version").textContent = snapshot.version ?? "—";
+  // Also in the header, where it is visible without expanding Settings.
+  el("header-version").textContent = snapshot.version ? `v${snapshot.version}` : "";
 
   renderStatus(snapshot);
   el("last-updated").textContent = footerText(snapshot);
