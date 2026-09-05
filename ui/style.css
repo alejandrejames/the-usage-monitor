@@ -221,12 +221,30 @@ h1 { font-size: 13px; font-weight: 600; margin: 0; }
 
 /* Footer */
 
+/* Stacked, not side by side: the status line grows to "updated 12s ago ·
+   next in 55s", which wrapped and crowded the buttons on one row. */
 footer {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
   border-top: 0.5px solid var(--border);
   padding-top: 10px;
+}
+
+footer .muted {
+  text-align: center;
+  /* One line always — the countdown ticks every second, and a wrap would
+     make the panel jump height each time it crossed the boundary. */
+  white-space: nowrap;
+}
+
+footer .actions {
+  justify-content: stretch;
+}
+
+footer .actions .btn {
+  flex: 1;
 }
 
 /* No trailing margin — the window is sized to the content, so any bottom
