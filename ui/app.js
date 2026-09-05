@@ -106,35 +106,76 @@ function render(snapshot) {
 
   el("plan").textContent = snapshot.plan ?? "";
 
+  // A stale poll means the reading could not be refreshed — not that it is
+  // meaningless. Keep showing the last known numbers rather than blanking
+  // them: at 100% usage the last reading is the one that explains why
+  // everything else stopped working. The notice below says it is not fresh.
+  const stale = snapshot.isStale;
+  const hasReading = snapshot.lastUpdatedMs != null;
+
   for (const [key, style] of [
     ["session", "timeOnly"],
     ["weekly", "dateAndTime"],
   ]) {
     const percent = snapshot[`${key}Percent`];
-    const stale = snapshot.isStale;
 
-    // A dimmed number would read as a real (low) value, so show a dash
-    // instead — the same reasoning as the tray's disconnected placeholder.
     const value = el(`${key}-value`);
-    value.textContent = stale ? "—" : `${Math.round(percent)}%`;
+    value.textContent = hasReading ? `${Math.round(percent)}%` : "—";
     // The number carries the threshold colour too, not just the bar — that is
     // how the Swift original read at a glance.
-    value.style.color = stale ? "var(--fg-muted)" : usageColor(percent);
+    value.style.color = hasReading ? usageColor(percent) : "var(--fg-muted)";
 
     const bar = el(`${key}-bar`);
-    bar.style.width = stale ? "0%" : `${Math.min(100, Math.max(0, percent))}%`;
+    bar.style.width = hasReading ? `${Math.min(100, Math.max(0, percent))}%` : "0%";
     bar.style.backgroundColor = usageColor(percent);
 
-    el(`${key}-reset`).textContent = stale
-      ? "no connection"
-      : resetString(snapshot[`${key}ResetAtMs`], style);
+    // The reset time stays true while offline — the window keeps ticking
+    // whether or not the app can reach the API.
+    el(`${key}-reset`).textContent = hasReading
+      ? resetString(snapshot[`${key}ResetAtMs`], style)
+      : "—";
   }
+
+  renderNotice(snapshot, stale, hasReading);
 
   el("cred-source").textContent = snapshot.credentialSource ?? "—";
   el("app-version").textContent = snapshot.version ?? "—";
 
   renderStatus(snapshot);
   el("last-updated").textContent = footerText(snapshot);
+}
+
+/// The banner above the metrics. Separates "your quota is spent" from "the
+/// app cannot reach the API" — identical from the numbers alone, very
+/// different in what they mean.
+function renderNotice(snapshot, stale, hasReading) {
+  const notice = el("notice");
+  const icon = el("notice-icon");
+  const text = el("notice-text");
+
+  if (snapshot.rateLimited) {
+    notice.hidden = false;
+    notice.className = "notice limit";
+    icon.textContent = "\u26D4";
+    const resets = resetString(snapshot.sessionResetAtMs, "timeOnly");
+    text.textContent =
+      resets === "—"
+        ? "Session limit reached — requests are being refused."
+        : `Session limit reached — ${resets}.`;
+    return;
+  }
+
+  if (stale) {
+    notice.hidden = false;
+    notice.className = "notice offline";
+    icon.textContent = "\u26A0\uFE0F";
+    text.textContent = hasReading
+      ? "Can't reach the API — showing the last reading."
+      : "Can't reach the API.";
+    return;
+  }
+
+  notice.hidden = true;
 }
 
 // Worst-of summary, mirroring core's overall_health severity ordering.

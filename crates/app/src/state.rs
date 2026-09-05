@@ -27,6 +27,9 @@ pub struct AppSnapshot {
     pub is_stale: bool,
     /// False when no Claude Code credential is available at all.
     pub is_authenticated: bool,
+    /// True when the last poll was answered with 429 — the quota is spent.
+    /// Distinct from `is_stale`, which means the reading could not be taken.
+    pub rate_limited: bool,
     pub plan: Option<String>,
     pub services: Vec<ServiceStatus>,
     pub status_is_stale: bool,
@@ -47,6 +50,7 @@ impl Default for AppSnapshot {
             last_updated_ms: None,
             is_stale: false,
             is_authenticated: false,
+            rate_limited: false,
             plan: None,
             services: Vec::new(),
             status_is_stale: false,
@@ -110,7 +114,11 @@ fn now_millis() -> i64 {
 
 /// Outcome of one poll, so the caller can drive backoff and alerts.
 pub enum PollOutcome {
-    Updated(UsageSnapshot),
+    Updated {
+        snapshot: UsageSnapshot,
+        /// The API answered 429 — the quota is spent, not a connection problem.
+        rate_limited: bool,
+    },
     /// Credential missing — not a network failure, so no backoff.
     Unauthenticated,
     Failed,
@@ -142,28 +150,34 @@ pub fn poll_once(state: &AppState) -> PollOutcome {
         }
     };
 
+    // Do not turn 4xx/5xx into errors. A 429 is the single most important
+    // response this app receives — it is what the API returns once the quota
+    // is spent — and it carries the usage headers like any other. Letting ureq
+    // raise it as an error discards exactly the reading needed to display
+    // "100%", which is why the app used to go blank at the limit.
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+
     let mut request =
-        ureq::post(usage::ENDPOINT).header("Authorization", &format!("Bearer {token}"));
+        agent.post(usage::ENDPOINT).header("Authorization", &format!("Bearer {token}"));
     for (name, value) in usage::REQUEST_HEADERS {
         request = request.header(*name, *value);
     }
 
-    // A 429 is a normal, useful response here: the usage headers ride along
-    // with it. Only transport failures and 401s are treated as problems.
     let response = match request.send(usage::PROBE_BODY) {
         Ok(r) => r,
-        Err(ureq::Error::StatusCode(401)) => {
-            // The token may have been rotated out of band by Claude Code.
-            state.credentials.lock().expect("credential lock").invalidate();
-            return PollOutcome::Failed;
-        }
-        Err(ureq::Error::StatusCode(_)) => {
-            // Other status codes still carry headers, but ureq consumes the
-            // response on error, so treat them as a failed poll.
-            return PollOutcome::Failed;
-        }
+        // A transport failure has no headers to salvage.
         Err(_) => return PollOutcome::Failed,
     };
+
+    let status = response.status().as_u16();
+    if status == 401 {
+        // The token may have been rotated out of band by Claude Code.
+        state.credentials.lock().expect("credential lock").invalidate();
+        return PollOutcome::Failed;
+    }
 
     let headers: Vec<(String, String)> = response
         .headers()
@@ -174,13 +188,22 @@ pub fn poll_once(state: &AppState) -> PollOutcome {
         .collect();
 
     match usage::parse_headers(&headers) {
-        Some(snapshot) => PollOutcome::Updated(snapshot),
+        // 429 means the quota is spent. The reading is still good — better
+        // than good, it is the reading that matters most — so it is applied
+        // normally and the state is flagged for the popover.
+        Some(snapshot) => PollOutcome::Updated { snapshot, rate_limited: status == 429 },
+        // No usable headers on a non-2xx is a genuine failure; on a 2xx it
+        // means the contract changed.
         None => PollOutcome::Failed,
     }
 }
 
 /// Applies a successful poll to the shared state, returning any alert to fire.
-pub fn apply_usage(state: &AppState, snapshot: UsageSnapshot) -> Option<Alert> {
+pub fn apply_usage(
+    state: &AppState,
+    snapshot: UsageSnapshot,
+    rate_limited: bool,
+) -> Option<Alert> {
     let previous = {
         let mut last = state.last_session_percent.lock().expect("alert lock");
         let previous = *last;
@@ -199,6 +222,7 @@ pub fn apply_usage(state: &AppState, snapshot: UsageSnapshot) -> Option<Alert> {
         s.last_updated_ms = Some(now_millis());
         s.is_stale = false;
         s.is_authenticated = true;
+        s.rate_limited = rate_limited;
         s.plan = plan;
         s.credential_source = state.credential_source.lock().expect("source lock").clone();
     }
@@ -269,6 +293,7 @@ mod tests {
                 session_reset_at_ms: Some(1),
                 weekly_reset_at_ms: Some(2),
             },
+            false,
         );
 
         let s = state.snapshot();
@@ -289,13 +314,13 @@ mod tests {
         };
 
         // Below the line: silent.
-        assert_eq!(apply_usage(&state, snap(50.0)), None);
+        assert_eq!(apply_usage(&state, snap(50.0), false), None);
         // Crossing 80 fires once.
-        assert_eq!(apply_usage(&state, snap(85.0)), Some(Alert::Eighty));
+        assert_eq!(apply_usage(&state, snap(85.0), false), Some(Alert::Eighty));
         // Staying above does not re-fire.
-        assert_eq!(apply_usage(&state, snap(86.0)), None);
+        assert_eq!(apply_usage(&state, snap(86.0), false), None);
         // Crossing 95 fires.
-        assert_eq!(apply_usage(&state, snap(96.0)), Some(Alert::NinetyFive));
+        assert_eq!(apply_usage(&state, snap(96.0), false), Some(Alert::NinetyFive));
     }
 
     #[test]

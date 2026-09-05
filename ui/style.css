@@ -71,6 +71,33 @@ h1 { font-size: 13px; font-weight: 600; margin: 0; }
   letter-spacing: 0.04em;
 }
 
+/* Notice banner */
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 11px;
+  line-height: 1.4;
+  border-radius: 7px;
+  padding: 7px 9px;
+  margin-bottom: 12px;
+}
+
+.notice-icon { flex: none; }
+
+/* Quota spent — the numbers are correct, the API is just refusing work. */
+.notice.limit {
+  background: color-mix(in srgb, var(--usage-red) 14%, transparent);
+  color: var(--usage-red);
+}
+
+/* No reading at all — the numbers on screen are the last known ones. */
+.notice.offline {
+  background: var(--btn-bg);
+  color: var(--fg-muted);
+}
+
 /* Metrics */
 
 .metric { margin-bottom: 12px; }

@@ -13,8 +13,8 @@ fn main() {
     let state = Arc::new(AppState::new());
 
     match poll_once(&state) {
-        PollOutcome::Updated(s) => {
-            println!("USAGE OK");
+        PollOutcome::Updated { snapshot: s, rate_limited } => {
+            println!("USAGE OK{}", if rate_limited { " (rate limited — quota spent)" } else { "" });
             println!("  session: {}%", s.session_percent);
             println!("  weekly:  {}%", s.weekly_percent);
             println!("  session reset ms: {:?}", s.session_reset_at_ms);

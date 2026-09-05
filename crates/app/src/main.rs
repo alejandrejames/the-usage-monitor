@@ -85,8 +85,8 @@ fn quit_app(app: tauri::AppHandle) {
 /// One usage poll, applying the result and notifying the UI and tray.
 fn run_poll(app: &tauri::AppHandle, state: &Arc<AppState>) -> bool {
     let succeeded = match state::poll_once(state) {
-        PollOutcome::Updated(snapshot) => {
-            if let Some(alert) = state::apply_usage(state, snapshot) {
+        PollOutcome::Updated { snapshot, rate_limited } => {
+            if let Some(alert) = state::apply_usage(state, snapshot, rate_limited) {
                 send_alert(app, alert);
             }
             true
