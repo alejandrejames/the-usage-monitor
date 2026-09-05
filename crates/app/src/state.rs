@@ -234,6 +234,10 @@ pub fn mark_stale(state: &AppState, authenticated: bool) {
     let mut s = state.snapshot.lock().expect("snapshot lock");
     s.is_stale = true;
     s.is_authenticated = authenticated;
+    // A failed poll proves nothing about the quota. Leaving this set would
+    // latch the "session limit reached" banner on after a single 429, since
+    // only a *successful* poll assigns it.
+    s.rate_limited = false;
 }
 
 /// Seconds to wait before the next usage poll.
@@ -278,6 +282,28 @@ pub fn poll_status_once(state: &Arc<AppState>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_poll_does_not_latch_the_limit_banner() {
+        // Only a successful poll assigns `rate_limited`, so if a failure left
+        // it set, one 429 would pin "session limit reached" in the popover
+        // forever — including after the quota reset and polling recovered.
+        let state = AppState::new();
+        apply_usage(
+            &state,
+            UsageSnapshot {
+                session_percent: 100.0,
+                weekly_percent: 71.0,
+                session_reset_at_ms: Some(1),
+                weekly_reset_at_ms: Some(2),
+            },
+            true,
+        );
+        assert!(state.snapshot().rate_limited);
+
+        mark_stale(&state, true);
+        assert!(!state.snapshot().rate_limited, "a failure says nothing about the quota");
+    }
 
     #[test]
     fn a_successful_poll_clears_staleness() {
