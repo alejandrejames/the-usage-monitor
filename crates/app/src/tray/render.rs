@@ -49,6 +49,38 @@ struct DecodedIcon {
     rgba: Vec<u8>,
     width: u32,
     height: u32,
+    /// Bounding box of the non-transparent pixels, as (x0, y0, x1, y1)
+    /// inclusive. The bundled art carries different amounts of transparent
+    /// margin — the stopwatch fills 90% of its canvas, the calendar only 70% —
+    /// so scaling the full canvas would render one visibly smaller than the
+    /// other. Sampling this box instead makes them optically equal.
+    content: (u32, u32, u32, u32),
+}
+
+/// Finds the bounding box of pixels above a low alpha threshold.
+///
+/// The threshold is not zero because the source art has a soft glow whose
+/// outermost pixels are nearly transparent; including them would defeat the
+/// point of cropping.
+fn content_box(rgba: &[u8], width: u32, height: u32) -> (u32, u32, u32, u32) {
+    let (mut x0, mut y0, mut x1, mut y1) = (width, height, 0u32, 0u32);
+    for y in 0..height {
+        for x in 0..width {
+            let i = ((y * width + x) * 4 + 3) as usize;
+            if rgba.get(i).is_some_and(|&a| a > 8) {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x);
+                y1 = y1.max(y);
+            }
+        }
+    }
+    // A fully transparent image would leave the box inverted; fall back to the
+    // whole canvas so the caller never divides by a negative extent.
+    if x1 < x0 || y1 < y0 {
+        return (0, 0, width.saturating_sub(1), height.saturating_sub(1));
+    }
+    (x0, y0, x1, y1)
 }
 
 /// Decodes a bundled PNG. Returns `None` rather than panicking so a bad asset
@@ -64,7 +96,8 @@ fn decode(bytes: &[u8]) -> Option<DecodedIcon> {
     if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
         return None;
     }
-    Some(DecodedIcon { rgba: buf, width: info.width, height: info.height })
+    let content = content_box(&buf, info.width, info.height);
+    Some(DecodedIcon { rgba: buf, width: info.width, height: info.height, content })
 }
 
 /// Nearest-neighbour box sample into `size` x `size`, compositing onto `dst`.
@@ -83,18 +116,38 @@ fn blit_icon(
     if size == 0 {
         return;
     }
-    let step_x = icon.width as f32 / size as f32;
-    let step_y = icon.height as f32 / size as f32;
+    // Sample the content box, so transparent margin in the source art does not
+    // shrink the drawn icon.
+    let (cx0, cy0, cx1, cy1) = icon.content;
+    let (content_w, content_h) = (cx1 - cx0 + 1, cy1 - cy0 + 1);
 
-    for oy in 0..size {
-        for ox in 0..size {
-            // Average the source block this destination pixel covers.
-            let (x0, x1) = ((ox as f32 * step_x) as u32, (((ox + 1) as f32) * step_x) as u32);
-            let (y0, y1) = ((oy as f32 * step_y) as u32, (((oy + 1) as f32) * step_y) as u32);
+    // Keep the art's aspect ratio inside the square slot, centring the
+    // shorter axis — the calendar is wider than tall, the stopwatch square.
+    let scale = (size as f32 / content_w as f32).min(size as f32 / content_h as f32);
+    let draw_w = (content_w as f32 * scale).round().max(1.0) as u32;
+    let draw_h = (content_h as f32 * scale).round().max(1.0) as u32;
+    let off_x = at_x + ((size - draw_w.min(size)) / 2) as i32;
+    let off_y = at_y + ((size - draw_h.min(size)) / 2) as i32;
+
+    let step_x = content_w as f32 / draw_w as f32;
+    let step_y = content_h as f32 / draw_h as f32;
+
+    for oy in 0..draw_h {
+        for ox in 0..draw_w {
+            // Average the source block this destination pixel covers, offset
+            // into the content box.
+            let (x0, x1) = (
+                cx0 + (ox as f32 * step_x) as u32,
+                cx0 + (((ox + 1) as f32) * step_x) as u32,
+            );
+            let (y0, y1) = (
+                cy0 + (oy as f32 * step_y) as u32,
+                cy0 + (((oy + 1) as f32) * step_y) as u32,
+            );
             let (mut r, mut g, mut b, mut a, mut n) = (0u32, 0u32, 0u32, 0u32, 0u32);
 
-            for sy in y0..y1.max(y0 + 1).min(icon.height) {
-                for sx in x0..x1.max(x0 + 1).min(icon.width) {
+            for sy in y0..y1.max(y0 + 1).min(cy1 + 1) {
+                for sx in x0..x1.max(x0 + 1).min(cx1 + 1) {
                     let i = ((sy * icon.width + sx) * 4) as usize;
                     if i + 3 >= icon.rgba.len() {
                         continue;
@@ -114,7 +167,7 @@ fn blit_icon(
                 continue;
             }
 
-            let (dx, dy) = (at_x + ox as i32, at_y + oy as i32);
+            let (dx, dy) = (off_x + ox as i32, off_y + oy as i32);
             if dx < 0 || dy < 0 || dx >= dst_w as i32 || dy >= dst_h as i32 {
                 continue;
             }
@@ -193,7 +246,7 @@ pub fn render_at(rows: &[Row], total_h: u32) -> Rendered {
 
     // Icons are square, sized to the row and inset slightly so they sit
     // optically level with the digits rather than overpowering them.
-    let icon_size = (row_h * 0.70).round().max(1.0);
+    let icon_size = (row_h * 0.88).round().max(1.0);
     let icon_gap = (icon_size * 0.10).round().max(1.0);
     let any_icons = rows.iter().any(|r| r.icon.is_some());
     let text_offset = if any_icons { icon_size + icon_gap } else { 0.0 };
@@ -310,6 +363,28 @@ mod tests {
             assert!(icon.width > 0 && icon.height > 0);
             assert_eq!(icon.rgba.len(), (icon.width * icon.height * 4) as usize);
         }
+    }
+
+    #[test]
+    fn icons_are_cropped_to_their_content() {
+        // The bundled art carries different amounts of transparent margin —
+        // the calendar fills ~70% of its canvas, the stopwatch ~90%. Without
+        // cropping, the calendar would render visibly smaller in the same slot.
+        for kind in [RowIcon::Session, RowIcon::Weekly] {
+            let icon = decode(kind.bytes()).expect("decodes");
+            let (x0, y0, x1, y1) = icon.content;
+            assert!(x1 > x0 && y1 > y0, "{kind:?} has an empty content box");
+            assert!(x1 < icon.width && y1 < icon.height, "{kind:?} box out of bounds");
+        }
+
+        // The calendar must actually be the one with margin to trim, or this
+        // whole mechanism is pointless.
+        let weekly = decode(RowIcon::Weekly.bytes()).expect("decodes");
+        let (x0, _, x1, _) = weekly.content;
+        assert!(
+            (x1 - x0 + 1) < weekly.width,
+            "expected the calendar to have transparent margin"
+        );
     }
 
     #[test]
