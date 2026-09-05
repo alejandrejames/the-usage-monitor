@@ -52,6 +52,36 @@ function resetString(epochMs, style) {
   return `${countdown} (${new Intl.DateTimeFormat(undefined, options).format(target)})`;
 }
 
+/// Poll interval in seconds, kept in sync with the settings panel so the
+/// countdown stays right when the user changes it.
+let pollIntervalSecs = 60;
+
+/// "updated 12s ago · next in 48s".
+///
+/// The countdown is derived from lastUpdated plus the poll interval rather
+/// than tracked separately: the poller has no callback into the UI, and a
+/// separately-run timer would drift out of step with it after a failed poll
+/// or a settings change.
+function footerText(snapshot) {
+  if (snapshot.isStale) {
+    // A failed poll backs off, so the next attempt is not on the normal
+    // cadence and promising a time would be wrong.
+    return "offline — retrying";
+  }
+  if (snapshot.lastUpdatedMs == null) return "—";
+
+  const updated = `updated ${relativeTime(snapshot.lastUpdatedMs)}`;
+  const dueMs = snapshot.lastUpdatedMs + pollIntervalSecs * 1000;
+  const remaining = Math.round((dueMs - Date.now()) / 1000);
+
+  // A poll can overrun its slot; "now" is honest where a negative is not.
+  if (remaining <= 0) return `${updated} · refreshing…`;
+  // Seconds past a minute too: at the default 60s interval a fresh poll would
+  // otherwise read "next in 1m" and sit there, looking stuck.
+  if (remaining < 90) return `${updated} · next in ${remaining}s`;
+  return `${updated} · next in ${Math.round(remaining / 60)}m`;
+}
+
 function relativeTime(epochMs) {
   if (epochMs == null) return "—";
   const seconds = Math.floor((Date.now() - epochMs) / 1000);
@@ -104,9 +134,7 @@ function render(snapshot) {
   el("app-version").textContent = snapshot.version ?? "—";
 
   renderStatus(snapshot);
-  el("last-updated").textContent = snapshot.isStale
-    ? "offline"
-    : `updated ${relativeTime(snapshot.lastUpdatedMs)}`;
+  el("last-updated").textContent = footerText(snapshot);
 }
 
 // Worst-of summary, mirroring core's overall_health severity ordering.
@@ -160,6 +188,7 @@ function renderStatus(snapshot) {
 async function loadSettings() {
   try {
     const s = await invoke("get_settings");
+    pollIntervalSecs = s.refreshInterval;
     el("interval").value = String(s.refreshInterval);
     el("tray-display").value = s.trayDisplay;
     el("alert80").checked = s.alert80;
@@ -180,7 +209,9 @@ async function saveSettings() {
       },
     });
     // Reflect any clamping back into the controls.
+    pollIntervalSecs = saved.refreshInterval;
     el("interval").value = String(saved.refreshInterval);
+    if (latest) render(latest);
   } catch {
     // Leave the controls as the user set them; the change just did not persist.
   }
@@ -234,5 +265,11 @@ new MutationObserver(fitSoon).observe(document.body, {
 });
 document.querySelector(".status")?.addEventListener("toggle", fitSoon);
 
-// Keep the countdowns and "updated Nm ago" honest without re-polling.
+// The reset countdowns move slowly; a full redraw every 30s is enough.
 setInterval(() => latest && render(latest), 30000);
+
+// The next-poll countdown ticks every second, and only touches one node so it
+// does not fight the window auto-fit.
+setInterval(() => {
+  if (latest && !latest.isStale) el("last-updated").textContent = footerText(latest);
+}, 1000);
