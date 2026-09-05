@@ -28,3 +28,7 @@ secrets.*
 # Claude Code local config / instructions — not for the public repo
 .claude/
 CLAUDE.md
+
+# Rust (cross-platform port — see docs/cross-platform.md)
+/target/
+/target-linux/   # container build output (see packaging/)

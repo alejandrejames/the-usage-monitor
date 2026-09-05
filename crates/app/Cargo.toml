@@ -1,0 +1,52 @@
+[package]
+name    = "claudeusage"
+version.workspace    = true
+edition.workspace    = true
+license.workspace    = true
+repository.workspace = true
+description = "Cross-platform menu-bar/tray monitor for Claude subscription usage."
+
+[lib]
+name = "claudeusage"
+path = "src/lib.rs"
+
+[[bin]]
+name = "claudeusage"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+claudeusage-core = { path = "../core" }
+# macos-private-api: required for the transparent popover window.
+tauri        = { version = "2", features = ["tray-icon", "macos-private-api"] }
+tauri-plugin-notification    = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart       = "2"
+# tray-icon feature: required for Position::TrayCenter, which anchors the
+# popover under the menu-bar item instead of centring it on screen.
+tauri-plugin-positioner      = { version = "2", features = ["tray-icon"] }
+serde.workspace      = true
+serde_json.workspace = true
+# Blocking HTTP: the pollers run on their own threads, so no async runtime.
+ureq = { version = "3", features = ["json"] }
+# Tray icon rendering. ab_glyph rasterises the digits; no shaping needed.
+ab_glyph = "0.2"
+# Decoding the bundled row icons. `png` alone, not the full `image` crate —
+# these are two known PNGs, not arbitrary user input.
+png = "0.17"
+
+# Windows only: querying the tray icon size for the current DPI. Unlike macOS,
+# which scales an oversized icon cleanly, Windows downscales poorly — so the
+# icon must be rendered at exactly the size the shell asks for.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+] }
+
+[features]
+# Tauri's default custom-protocol feature, used for release builds.
+custom-protocol = ["tauri/custom-protocol"]

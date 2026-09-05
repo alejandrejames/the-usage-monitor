@@ -11,6 +11,48 @@ to bump both and tag a release.
 
 ## [Unreleased]
 
+### Changed
+- **The version now lives only in `Cargo.toml`.** `crates/app` inherits it and
+  Tauri reads the crate version, so one edit reaches the binary, the bundle and
+  every installer filename. `bump-version.sh` updates it and works with both GNU
+  and BSD sed (it previously hardcoded the BSD form and could not run on Linux).
+
+### Removed
+- The Swift/Xcode app: `ClaudeUsage.xcodeproj`, `project.yml`,
+  `ExportOptions.plist`, `Scripts/build.sh`, `ClaudeUsage/`, `Shared/`,
+  `ClaudeUsageWidget/`, and the Swift-specific docs. The Rust/Tauri app replaces
+  it on all three platforms; the sources remain in git history.
+
+### Added
+- `docs/cross-platform.md` — plan of record for porting the app to Tauri v2
+  (macOS, Windows, Linux).
+- `crates/core` (`claudeusage-core`) — platform-agnostic port of the usage
+  header parsing, Statuspage status parsing, threshold colours and
+  edge-triggered alerts, with 43 unit tests. No UI and no OS calls, so it
+  builds on all three target platforms. The macOS Swift app is unaffected and
+  remains the reference implementation.
+- Credential sources in `claudeusage-core`: an ordered chain on macOS
+  (credentials file, `/usr/bin/security`, native keychain) and the plaintext
+  `.credentials.json` on Linux and Windows, honouring `CLAUDE_CONFIG_DIR`.
+  Includes a `probe` binary for verifying the chain on any platform.
+- `crates/app` and `ui/` — the Tauri v2 host and popover. Renders the tray icon
+  with a bundled DejaVu Sans Bold (tabular digits, so the icon does not jitter),
+  polls usage and service status on background threads, and fires the 80/95 %
+  notifications. The popover is plain HTML/CSS/JS; reset times are formatted
+  with `Intl.DateTimeFormat`. A `pollcheck` binary verifies a live poll outside
+  the GUI. macOS only so far.
+- Windows support in `crates/app`: the tray icon is rendered at the DPI-queried
+  size (`GetSystemMetricsForDpi`), since Windows downscales an oversized icon
+  poorly, and a 250 ms debounce stops a tray click from reopening the popover
+  that the preceding focus-loss just closed. Written and cross-compile-checked
+  but not yet run on Windows hardware.
+- Linux support in `crates/app`: the tray icon is redrawn only when its colour
+  bucket changes (every `set_icon` writes a PNG to `$XDG_RUNTIME_DIR`, so a
+  per-poll redraw would mean ~1,440 writes a day), and a startup check reports
+  when no StatusNotifierWatcher is present with install advice matched to the
+  distro. `packaging/` adds a containerised Ubuntu 22.04 build producing
+  `.deb`, `.rpm` and `.AppImage`; AppImage is recommended for Bazzite.
+
 ## [1.1.0] - 2026-06-11
 
 ### Added

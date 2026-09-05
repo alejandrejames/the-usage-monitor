@@ -1,0 +1,334 @@
+//! Application state and the polling loops.
+//!
+//! Replaces `UsageStore` / `UsagePoller` / `StatusPoller` from the Swift app.
+//! `@Observable` has no Rust equivalent, so state lives behind a `Mutex` and
+//! the UI is notified explicitly via a Tauri event.
+
+use claudeusage_core::{
+    alerts, credentials::CachedCredentials, status, usage, Alert, ServiceStatus, UsageSnapshot,
+};
+use serde::Serialize;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+/// Everything the popover renders, in one payload.
+///
+/// Reset times stay as epoch millis; the WebView formats them with
+/// `Intl.DateTimeFormat`, which has locale data Rust would need `icu` for.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSnapshot {
+    pub session_percent: f64,
+    pub weekly_percent: f64,
+    pub session_reset_at_ms: Option<i64>,
+    pub weekly_reset_at_ms: Option<i64>,
+    pub last_updated_ms: Option<i64>,
+    /// True when the last poll failed; the tray dims and shows placeholders.
+    pub is_stale: bool,
+    /// False when no Claude Code credential is available at all.
+    pub is_authenticated: bool,
+    /// True when the last poll was answered with 429 — the quota is spent.
+    /// Distinct from `is_stale`, which means the reading could not be taken.
+    pub rate_limited: bool,
+    pub plan: Option<String>,
+    pub services: Vec<ServiceStatus>,
+    pub status_is_stale: bool,
+    /// Which credential source resolved, for the settings panel. Diagnosing
+    /// auth problems from a GUI is otherwise guesswork.
+    pub credential_source: Option<String>,
+    /// App version, so the panel can show it without a separate command.
+    pub version: String,
+}
+
+impl Default for AppSnapshot {
+    fn default() -> Self {
+        Self {
+            session_percent: 0.0,
+            weekly_percent: 0.0,
+            session_reset_at_ms: None,
+            weekly_reset_at_ms: None,
+            last_updated_ms: None,
+            is_stale: false,
+            is_authenticated: false,
+            rate_limited: false,
+            plan: None,
+            services: Vec::new(),
+            status_is_stale: false,
+            credential_source: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
+}
+
+/// Shared application state.
+pub struct AppState {
+    pub snapshot: Mutex<AppSnapshot>,
+    pub credentials: Mutex<CachedCredentials>,
+    /// Label of the source that last resolved a credential.
+    credential_source: Mutex<Option<String>>,
+    /// Previous session percentage, for edge-triggered alerts.
+    last_session_percent: Mutex<f64>,
+}
+
+impl AppState {
+    pub fn new() -> Self {
+        Self {
+            snapshot: Mutex::new(AppSnapshot::default()),
+            credentials: Mutex::new(CachedCredentials::with_default_sources()),
+            credential_source: Mutex::new(None),
+            last_session_percent: Mutex::new(0.0),
+        }
+    }
+
+    pub fn snapshot(&self) -> AppSnapshot {
+        self.snapshot.lock().expect("snapshot lock").clone()
+    }
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Prints the winning credential source the first time it is seen, and again
+/// whenever it changes. Never logs the credential itself.
+fn log_source_once(source: claudeusage_core::SourceKind) {
+    use std::sync::Mutex;
+    static LAST: Mutex<Option<claudeusage_core::SourceKind>> = Mutex::new(None);
+    let mut last = LAST.lock().expect("source log lock");
+    if *last != Some(source) {
+        eprintln!("credential resolved via: {}", source.label());
+        *last = Some(source);
+    }
+}
+
+fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+// MARK: - Usage polling
+
+/// Outcome of one poll, so the caller can drive backoff and alerts.
+pub enum PollOutcome {
+    Updated {
+        snapshot: UsageSnapshot,
+        /// The API answered 429 — the quota is spent, not a connection problem.
+        rate_limited: bool,
+    },
+    /// Credential missing — not a network failure, so no backoff.
+    Unauthenticated,
+    Failed,
+}
+
+/// Performs one usage poll.
+///
+/// Sends a minimal `/v1/messages` request and reads the rate-limit headers;
+/// the completion is discarded. See `claudeusage_core::usage`.
+pub fn poll_once(state: &AppState) -> PollOutcome {
+    let token = {
+        let mut creds = state.credentials.lock().expect("credential lock");
+        match creds.token() {
+            Ok(resolved) => {
+                *state.credential_source.lock().expect("source lock") =
+                    Some(resolved.source.label().to_string());
+                // Log which source won, once per change. Diagnosing "Claude
+                // Code not detected" from a GUI is otherwise guesswork — the
+                // credential chain is the most environment-sensitive part of
+                // the app, and a launchd-started process has a very different
+                // environment from a shell.
+                log_source_once(resolved.source);
+                resolved.credentials.access_token.clone()
+            }
+            Err(e) => {
+                eprintln!("credential lookup failed: {e}");
+                return PollOutcome::Unauthenticated;
+            }
+        }
+    };
+
+    // Do not turn 4xx/5xx into errors. A 429 is the single most important
+    // response this app receives — it is what the API returns once the quota
+    // is spent — and it carries the usage headers like any other. Letting ureq
+    // raise it as an error discards exactly the reading needed to display
+    // "100%", which is why the app used to go blank at the limit.
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into();
+
+    let mut request =
+        agent.post(usage::ENDPOINT).header("Authorization", &format!("Bearer {token}"));
+    for (name, value) in usage::REQUEST_HEADERS {
+        request = request.header(*name, *value);
+    }
+
+    let response = match request.send(usage::PROBE_BODY) {
+        Ok(r) => r,
+        // A transport failure has no headers to salvage.
+        Err(_) => return PollOutcome::Failed,
+    };
+
+    let status = response.status().as_u16();
+    if status == 401 {
+        // The token may have been rotated out of band by Claude Code.
+        state.credentials.lock().expect("credential lock").invalidate();
+        return PollOutcome::Failed;
+    }
+
+    let headers: Vec<(String, String)> = response
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| {
+            value.to_str().ok().map(|v| (name.as_str().to_string(), v.to_string()))
+        })
+        .collect();
+
+    match usage::parse_headers(&headers) {
+        // 429 means the quota is spent. The reading is still good — better
+        // than good, it is the reading that matters most — so it is applied
+        // normally and the state is flagged for the popover.
+        Some(snapshot) => PollOutcome::Updated { snapshot, rate_limited: status == 429 },
+        // No usable headers on a non-2xx is a genuine failure; on a 2xx it
+        // means the contract changed.
+        None => PollOutcome::Failed,
+    }
+}
+
+/// Applies a successful poll to the shared state, returning any alert to fire.
+pub fn apply_usage(
+    state: &AppState,
+    snapshot: UsageSnapshot,
+    rate_limited: bool,
+) -> Option<Alert> {
+    let previous = {
+        let mut last = state.last_session_percent.lock().expect("alert lock");
+        let previous = *last;
+        *last = snapshot.session_percent;
+        previous
+    };
+
+    let plan = state.credentials.lock().expect("credential lock").plan().map(str::to_string);
+
+    {
+        let mut s = state.snapshot.lock().expect("snapshot lock");
+        s.session_percent = snapshot.session_percent;
+        s.weekly_percent = snapshot.weekly_percent;
+        s.session_reset_at_ms = snapshot.session_reset_at_ms;
+        s.weekly_reset_at_ms = snapshot.weekly_reset_at_ms;
+        s.last_updated_ms = Some(now_millis());
+        s.is_stale = false;
+        s.is_authenticated = true;
+        s.rate_limited = rate_limited;
+        s.plan = plan;
+        s.credential_source = state.credential_source.lock().expect("source lock").clone();
+    }
+
+    alerts::check(previous, snapshot.session_percent, crate::settings::get().alerts())
+}
+
+pub fn mark_stale(state: &AppState, authenticated: bool) {
+    let mut s = state.snapshot.lock().expect("snapshot lock");
+    s.is_stale = true;
+    s.is_authenticated = authenticated;
+}
+
+/// Seconds to wait before the next usage poll.
+pub fn next_delay(consecutive_failures: u32) -> Duration {
+    Duration::from_secs(if consecutive_failures == 0 {
+        // Read per tick, so a changed interval takes effect on the next cycle
+        // without restarting the poller.
+        crate::settings::get().refresh_interval
+    } else {
+        claudeusage_core::backoff_secs(consecutive_failures)
+    })
+}
+
+// MARK: - Status polling
+
+/// Fetches the Claude service status. Unauthenticated, and deliberately
+/// independent of usage polling: an outage is worth showing even when the
+/// usage reading is unavailable.
+pub fn poll_status_once(state: &Arc<AppState>) -> bool {
+    let body = match ureq::get(status::ENDPOINT).header("Accept", "application/json").call() {
+        Ok(mut response) => match response.body_mut().read_to_string() {
+            Ok(b) => b,
+            Err(_) => return false,
+        },
+        Err(_) => return false,
+    };
+
+    match status::parse_summary(&body) {
+        Some(services) => {
+            let mut s = state.snapshot.lock().expect("snapshot lock");
+            s.services = services;
+            s.status_is_stale = false;
+            true
+        }
+        None => {
+            state.snapshot.lock().expect("snapshot lock").status_is_stale = true;
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_successful_poll_clears_staleness() {
+        let state = AppState::new();
+        mark_stale(&state, true);
+        assert!(state.snapshot().is_stale);
+
+        apply_usage(
+            &state,
+            UsageSnapshot {
+                session_percent: 43.0,
+                weekly_percent: 71.0,
+                session_reset_at_ms: Some(1),
+                weekly_reset_at_ms: Some(2),
+            },
+            false,
+        );
+
+        let s = state.snapshot();
+        assert!(!s.is_stale);
+        assert!(s.is_authenticated);
+        assert_eq!(s.session_percent, 43.0);
+        assert!(s.last_updated_ms.is_some());
+    }
+
+    #[test]
+    fn alerts_are_edge_triggered_across_polls() {
+        let state = AppState::new();
+        let snap = |p: f64| UsageSnapshot {
+            session_percent: p,
+            weekly_percent: 0.0,
+            session_reset_at_ms: None,
+            weekly_reset_at_ms: None,
+        };
+
+        // Below the line: silent.
+        assert_eq!(apply_usage(&state, snap(50.0), false), None);
+        // Crossing 80 fires once.
+        assert_eq!(apply_usage(&state, snap(85.0), false), Some(Alert::Eighty));
+        // Staying above does not re-fire.
+        assert_eq!(apply_usage(&state, snap(86.0), false), None);
+        // Crossing 95 fires.
+        assert_eq!(apply_usage(&state, snap(96.0), false), Some(Alert::NinetyFive));
+    }
+
+    #[test]
+    fn backoff_applies_only_after_a_failure() {
+        // A clean poll waits the configured interval, not a backoff.
+        assert_eq!(next_delay(0).as_secs(), crate::settings::get().refresh_interval);
+        assert_eq!(next_delay(1).as_secs(), 20);
+        // Capped at core's ceiling rather than growing without bound.
+        assert_eq!(next_delay(9).as_secs(), claudeusage_core::DEFAULT_POLL_INTERVAL_SECS);
+    }
+}

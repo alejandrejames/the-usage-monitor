@@ -2,8 +2,12 @@
 
 ![ClaudeUsage](etc/usagemonitor.jpg)
 
-A macOS menu-bar app that shows your Claude subscription usage (5-hour session %
-and 7-day weekly %) with Liquid Glass styling (macOS 26). macOS-only.
+A cross-platform tray app showing your Claude subscription usage — the 5-hour
+session window and the 7-day weekly window — in your menu bar or system tray,
+with a popover on click.
+
+**macOS, Windows and Linux** (Ubuntu, Debian, Arch, Bazzite). Built with Rust
+and Tauri v2; ~8.8 MB.
 
 ---
 
@@ -34,10 +38,11 @@ This is documented honestly rather than hidden. Proceed at your own discretion.
 
 ## How it works
 
-- **Auth:** reads Claude Code's OAuth token from the login keychain (item
-  `Claude Code-credentials`). No in-app login. The app holds no credential of
-  its own and never stores or transmits the token anywhere except the Anthropic
-  API request.
+- **Auth:** reuses the OAuth credential Claude Code already stores — the login
+  keychain on macOS, `.credentials.json` on Linux and Windows. No in-app login.
+  The app holds no credential of its own and never stores or transmits the
+  token anywhere except the Anthropic API request. See
+  [docs/auth.md](docs/auth.md).
 - **Per device:** it shows the usage of whatever account is signed into
   `claude` (Claude Code) on that machine.
 - **Fetch:** every 60 s (configurable) it sends a minimal 1-token
@@ -47,7 +52,11 @@ This is documented honestly rather than hidden. Proceed at your own discretion.
   and the matching `-5h-reset` / `-7d-reset` epochs. This is the same technique
   established Claude usage monitors use, and is more durable than the
   undocumented `/api/oauth/usage` endpoint.
-- **Unsandboxed** so it can read Claude Code's login-keychain item.
+- **Tray display:** both percentages are rendered into the icon bitmap, because
+  a menu-bar item clips multiline text and Windows has no tray text at all.
+  Colour follows the usage threshold — green below 70 %, amber below 90 %, red
+  above. Linux puts the numbers in the tray title instead.
+- **Unsandboxed** on macOS so it can read Claude Code's login-keychain item.
 
 ---
 
@@ -55,48 +64,63 @@ This is documented honestly rather than hidden. Proceed at your own discretion.
 
 ```
 ClaudeUsage/
-├── project.yml              — XcodeGen spec (the .xcodeproj is generated)
-├── Shared/
-│   ├── Theme.swift          — Liquid Glass modifier + UsageBar + colour helpers
-│   ├── AuthManager.swift    — reads Claude Code's keychain OAuth token
-│   └── UsageStore.swift     — @Observable store + UsagePoller (headers method)
+├── Makefile                  every build/check command; `make` lists them
+├── Cargo.toml                workspace — the only place the version lives
 │
-├── ClaudeUsage/             — macOS menu-bar target (unsandboxed)
-│   ├── ClaudeUsageApp.swift — MenuBarExtra + Settings window
-│   ├── PopoverView.swift    — Liquid Glass usage panel
-│   ├── SettingsView.swift   — native grouped Form: account, interval, alerts, quit
-│   ├── Assets.xcassets      — UsageGreen/Amber/Red, AccentColor, AppIcon
-│   └── ClaudeUsage.entitlements
+├── crates/
+│   ├── core/                 platform-agnostic logic, no UI, no OS calls
+│   │   └── src/              credentials, usage, status, model, alerts
+│   └── app/                  the Tauri host
+│       └── src/              main, state, tray/{render,sizing,linux}
 │
-├── Scripts/build.sh         — regenerate project → archive → export → dmg
-└── ExportOptions.plist      — Personal Team export config
+├── ui/                       popover: index.html, style.css, app.js
+├── packaging/                Linux container build (.deb/.rpm/.AppImage)
+└── docs/
+    ├── architecture.md       how it works, and why — start here
+    ├── auth.md               credential sources and the macOS chain
+    └── cross-platform.md     the port's record and its measurements
 ```
 
 ---
 
 ## Build & run
 
-The `.xcodeproj` is generated from `project.yml` (not committed).
+`make` lists every task. The common ones:
 
 ```bash
-# one time
-brew install xcodegen
-# then
-xcodegen generate
-open ClaudeUsage.xcodeproj      # or: ./Scripts/build.sh for a DMG
+make run        # run the app
+make check      # fmt + clippy + tests
+make bundle     # macOS .app and .dmg
+make poll       # one live usage poll, no GUI
+make probe      # which credential source resolves
 ```
 
-Requirements: Xcode 26, macOS 26. Set your Personal Team ID in `project.yml`
-(`DEVELOPMENT_TEAM`) if signing doesn't resolve automatically.
+Requires rustc 1.88+ (Tauri's floor). `rust-toolchain.toml` pins it; if
+Homebrew's older rust shadows rustup on your `PATH`, the Makefile resolves
+around that for you.
 
-For the DMG pipeline:
+**First launch after installing the DMG** — the build is unsigned:
 
 ```bash
-brew install node graphicsmagick imagemagick
-npm install --global create-dmg
-./Scripts/build.sh
-xattr -rd com.apple.quarantine /Applications/ClaudeUsage.app   # first launch
+xattr -rd com.apple.quarantine /Applications/ClaudeUsage.app
 ```
+
+### Other platforms
+
+```bash
+make linux-check    # compile, lint and test for Linux in Docker
+make linux-bundle   # .deb, .rpm and .AppImage
+make windows-check  # type-check the Windows-only code paths
+```
+
+Linux needs `libwebkit2gtk-4.1` and `libayatana-appindicator3`; the bundles
+declare them. On GNOME — which Bazzite ships — the tray needs the AppIndicator
+extension, and the app says so on startup if it is missing. **AppImage is the
+recommended artifact for Bazzite**, since layering a package on an immutable OS
+means a reboot.
+
+> Windows and Linux are written and machine-checked but **have not been run on
+> real hardware yet**. See [docs/cross-platform.md](docs/cross-platform.md).
 
 ---
 

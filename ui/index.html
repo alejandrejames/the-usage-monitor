@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Claude Usage</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Shown when no Claude Code credential is available. -->
+  <section id="no-credential" hidden>
+    <div class="empty">
+      <div class="empty-icon">🔑</div>
+      <h1>Claude Code not detected</h1>
+      <p>Sign in with Claude Code (run <code>claude</code> and log in), then re-check.</p>
+      <div class="actions">
+        <button id="recheck" class="btn">Re-check</button>
+        <button id="quit-nc" class="btn btn-quit">Quit</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Main usage panel. -->
+  <section id="panel" hidden>
+    <header>
+      <h1>Claude Usage</h1>
+      <span id="plan" class="plan"></span>
+    </header>
+
+    <!-- Shown only when the quota is spent, or the reading is stale. -->
+    <div id="notice" class="notice" hidden>
+      <span id="notice-icon" class="notice-icon" aria-hidden="true"></span>
+      <span id="notice-text"></span>
+    </div>
+
+    <div class="metric">
+      <div class="metric-head">
+        <span class="metric-label">Session</span>
+        <span class="metric-value" id="session-value">—</span>
+      </div>
+      <div class="bar"><div class="bar-fill" id="session-bar"></div></div>
+      <div class="metric-reset" id="session-reset">—</div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-head">
+        <span class="metric-label">Weekly</span>
+        <span class="metric-value" id="weekly-value">—</span>
+      </div>
+      <div class="bar"><div class="bar-fill" id="weekly-bar"></div></div>
+      <div class="metric-reset" id="weekly-reset">—</div>
+    </div>
+
+    <!-- Collapsible service status, matching the Swift popover's accordion. -->
+    <details class="status">
+      <summary>
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-summary">Service status</span>
+      </summary>
+      <ul id="status-list"></ul>
+    </details>
+
+    <!-- Settings, collapsed by default so the panel stays compact. -->
+    <details class="settings" id="settings">
+      <summary>
+        <span class="chev" aria-hidden="true">›</span>
+        <span>Settings</span>
+      </summary>
+
+      <div class="setting">
+        <label for="interval">Polling interval</label>
+        <select id="interval" class="input">
+          <option value="30">30 seconds</option>
+          <option value="60">60 seconds</option>
+          <option value="120">2 minutes</option>
+          <option value="300">5 minutes</option>
+        </select>
+      </div>
+
+      <div class="setting">
+        <label for="tray-display">Menu bar shows</label>
+        <select id="tray-display" class="input">
+          <option value="both">Session and weekly</option>
+          <option value="session">Session only</option>
+          <option value="weekly">Weekly only</option>
+        </select>
+      </div>
+
+      <div class="setting">
+        <label for="alert80">Alert at 80%</label>
+        <input type="checkbox" id="alert80" />
+      </div>
+
+      <div class="setting">
+        <label for="alert95">Alert at 95%</label>
+        <input type="checkbox" id="alert95" />
+      </div>
+
+      <div class="setting setting-meta">
+        <span>Credential</span>
+        <span id="cred-source" class="muted">—</span>
+      </div>
+
+      <div class="setting setting-meta">
+        <span>Version</span>
+        <span id="app-version" class="muted">—</span>
+      </div>
+    </details>
+
+    <footer>
+      <span id="last-updated" class="muted">—</span>
+      <div class="actions">
+        <button id="refresh" class="btn btn-small">Refresh</button>
+        <button id="quit" class="btn btn-small btn-quit">Quit</button>
+      </div>
+    </footer>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>
